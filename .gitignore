@@ -1,0 +1,46 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+*.bak
+
+# 3ds Max
+*.max.bak
+autoback/
+*.tmp
+
+# Generated datasets (don't commit large image folders)
+datasets/
+dataset/
+output/
+outputs/
+images/
+sparse/
+
+# GS outputs
+*.ply
+*.compressed.ply
+*.splat
+*.ksplat
+
+# Logs
+*.log
+
+# Python (for future blender/unreal scripts)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Node (for future viewer)
+node_modules/
+package-lock.json
+yarn.lock
+dist/
