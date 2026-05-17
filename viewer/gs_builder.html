@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>/ai.oli — GS Builder</title>
+
+<!-- Blocks the browser's default "open file as URL" behavior IMMEDIATELY,
+     before the ES module loads. Without this, dropping a file outside the
+     dropzone (or before module script init) opens it as a binary in a new tab. -->
+<script>
+  window.addEventListener('dragenter', e => { e.preventDefault(); }, false);
+  window.addEventListener('dragover',  e => { e.preventDefault(); }, false);
+  window.addEventListener('drop',      e => { e.preventDefault(); }, false);
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@200;300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #000000;
+    --fg: #ffffff;
+    --muted: rgba(255, 255, 255, 0.5);
+    --line: rgba(255, 255, 255, 0.14);
+    --accent: #ffffff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    -webkit-font-smoothing: antialiased;
+    user-select: none; -webkit-user-select: none;
+    touch-action: none;
+  }
+  #stage { position: fixed; inset: 0; cursor: grab; }
+  #stage.dragging { cursor: grabbing; }
+  #stage canvas { display: block; }
+
+  #intro {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    z-index: 20;
+    transition: opacity 0.9s ease, visibility 0.9s ease;
+    padding: 2rem;
+  }
+  #intro.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+
+  .mark {
+    font-weight: 300;
+    font-size: clamp(2.2rem, 6vw, 4.2rem);
+    letter-spacing: -0.02em; line-height: 1;
+    display: inline-flex; align-items: baseline;
+  }
+  .mark .slash { font-weight: 400; }
+  .mark .cursor {
+    display: inline-block;
+    width: 0.55em; height: 1em;
+    margin-left: 0.2em;
+    background: var(--accent);
+    transform: translateY(0.12em);
+    animation: blink 1.05s steps(1, end) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .sub {
+    margin-top: 1.5rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    font-weight: 300;
+  }
+
+  #dropzone {
+    margin-top: 3rem;
+    padding: 2.5rem 3rem;
+    border: 1px dashed var(--line);
+    cursor: pointer;
+    display: flex; flex-direction: column;
+    align-items: center; gap: 1rem;
+    transition: border-color 0.3s, background 0.3s;
+    min-width: min(420px, 90vw);
+    text-align: center;
+  }
+  #dropzone:hover, #dropzone.over {
+    border-color: var(--fg);
+    background: rgba(255, 255, 255, 0.02);
+  }
+  .dz-icon {
+    width: 28px; height: 28px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1; opacity: 0.7;
+  }
+  .dz-main {
+    font-size: 0.72rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--fg);
+  }
+  .dz-or {
+    font-size: 0.62rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .dz-or u { text-decoration: underline; text-underline-offset: 4px; color: var(--fg); }
+  .dz-formats { font-size: 0.55rem; letter-spacing: 0.25em; color: var(--muted); margin-top: 0.4rem; }
+  #fileInput { display: none; }
+
+  .progress {
+    margin-top: 2rem;
+    width: 200px; height: 1px;
+    background: var(--line);
+    overflow: hidden; position: relative;
+    display: none;
+  }
+  .progress.visible { display: block; }
+  .progress-bar {
+    position: absolute; inset: 0;
+    background: var(--fg);
+    transform-origin: left;
+    transform: scaleX(0);
+    transition: transform 0.4s ease;
+  }
+  .progress-text {
+    margin-top: 0.8rem;
+    font-size: 0.65rem;
+    letter-spacing: 0.25em;
+    color: var(--muted);
+    height: 1em;
+    text-transform: uppercase;
+    display: none;
+  }
+  .progress-text.visible { display: block; }
+
+  #error {
+    margin-top: 1.5rem;
+    padding: 0.7rem 1.2rem;
+    border: 1px solid #ff5040;
+    color: #ff5040;
+    font-size: 0.65rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    display: none;
+    max-width: 460px;
+    text-align: center;
+  }
+  #error.visible { display: block; }
+
+  #hint {
+    position: fixed;
+    bottom: 2.5rem; left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.65rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--muted);
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+    pointer-events: none;
+    text-align: center;
+    white-space: nowrap;
+  }
+  #hint.visible { opacity: 1; }
+  #hint.fade { opacity: 0; }
+
+  #controls {
+    position: fixed;
+    bottom: 1.5rem; right: 1.5rem;
+    display: flex; gap: 0.5rem;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+  }
+  #controls.visible { opacity: 1; }
+
+  .btn {
+    width: 42px; height: 42px;
+    border: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: var(--fg);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.25s, background 0.25s;
+  }
+  .btn:hover {
+    border-color: var(--fg);
+    background: rgba(0, 0, 0, 0.75);
+  }
+  .btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.2; }
+  .btn.primary { border-color: var(--fg); }
+  .btn.primary:hover { background: rgba(255, 255, 255, 0.08); }
+
+  #brand {
+    position: fixed;
+    top: 1.5rem; left: 1.75rem;
+    font-weight: 300;
+    font-size: 0.78rem;
+    letter-spacing: 0;
+    color: var(--fg);
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+    pointer-events: none;
+    max-width: calc(100vw - 3rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #brand.visible { opacity: 0.85; }
+  #brand .slash { font-weight: 400; }
+  #brand .filename { color: var(--fg); text-transform: lowercase; }
+
+  /* When a file is being dragged, the whole window becomes a drop target
+     visually, even when the intro screen is hidden (i.e. a splat already loaded
+     and the user wants to load another one). */
+  body.dragging-file::after {
+    content: 'Relachez pour charger';
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--fg);
+    font-size: 0.75rem; letter-spacing: 0.25em;
+    text-transform: uppercase;
+    z-index: 500;
+    pointer-events: none;
+    border: 1px dashed var(--fg);
+    border-radius: 0;
+  }
+
+  #toast {
+    position: fixed;
+    top: 1.5rem; left: 50%;
+    transform: translate(-50%, -10px);
+    padding: 0.6rem 1.2rem;
+    border: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--fg);
+    z-index: 30;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s ease, transform 0.4s ease;
+  }
+  #toast.visible { opacity: 1; transform: translate(-50%, 0); }
+</style>
+</head>
+<body>
+
+<div id="stage"></div>
+
+<div id="brand">
+  <span class="filename" id="brandFilename"></span><span class="slash">/</span>ai.oli
+</div>
+
+<div id="intro">
+  <div class="mark"><span class="slash">/</span>ai.oli<span class="cursor"></span></div>
+  <div class="sub">// Gaussian Splat Builder</div>
+
+  <label id="dropzone" for="fileInput">
+    <svg class="dz-icon" viewBox="0 0 24 24">
+      <path d="M12 3v14M5 10l7-7 7 7M4 21h16"/>
+    </svg>
+    <span class="dz-main">Glissez un fichier .ply</span>
+    <span class="dz-or">ou <u>parcourir</u></span>
+    <span class="dz-formats">.ply &middot; .splat &middot; .ksplat</span>
+    <input type="file" id="fileInput" accept=".ply,.splat,.ksplat">
+  </label>
+
+  <div class="progress" id="progress"><div class="progress-bar" id="bar"></div></div>
+  <div class="progress-text" id="ptext"></div>
+  <div id="error"></div>
+</div>
+
+<div id="hint">Souris pour orbiter  -  Molette pour zoomer  -  Glissez un fichier pour changer</div>
+
+<div id="controls">
+  <button class="btn" id="resetBtn" title="Recentrer la vue (R)">
+    <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+  </button>
+  <button class="btn" id="fsBtn" title="Plein ecran (F)">
+    <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+  </button>
+  <button class="btn primary" id="exportBtn" title="Exporter en HTML autonome (E)">
+    <svg viewBox="0 0 24 24"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"/></svg>
+  </button>
+</div>
+
+<div id="toast"></div>
+
+<!-- ===========================================================================
+  EMBEDDED CLIENT VIEWER TEMPLATE
+  This is the self-contained HTML written out at export time. It contains the
+  splat as base64, has no drop zone, no export button. Only view + reset + fs.
+  Placeholders: __TITLE__, __FILENAME_NOEXT__, __FORMAT__, __CAM_POS__,
+                __CAM_TARGET__, __CAM_UP__, __B64__
+  =========================================================================== -->
+<script type="text/template" id="viewer-template"><!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>__TITLE__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@200;300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #000000; --fg: #ffffff;
+    --muted: rgba(255, 255, 255, 0.5);
+    --line: rgba(255, 255, 255, 0.14);
+    --accent: #ffffff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    -webkit-font-smoothing: antialiased;
+    user-select: none; -webkit-user-select: none;
+    touch-action: none;
+  }
+  #stage { position: fixed; inset: 0; cursor: grab; }
+  #stage.dragging { cursor: grabbing; }
+  #stage canvas { display: block; }
+
+  #intro {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    z-index: 20;
+    transition: opacity 1.2s ease, visibility 1.2s ease;
+  }
+  #intro.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+
+  .mark {
+    font-weight: 300;
+    font-size: clamp(2.2rem, 6vw, 4.2rem);
+    letter-spacing: -0.02em; line-height: 1;
+    display: inline-flex; align-items: baseline;
+  }
+  .mark .slash { font-weight: 400; }
+  .mark .cursor {
+    display: inline-block;
+    width: 0.55em; height: 1em;
+    margin-left: 0.2em;
+    background: var(--accent);
+    transform: translateY(0.12em);
+    animation: blink 1.05s steps(1, end) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .sub {
+    margin-top: 1.5rem;
+    font-size: 0.7rem; letter-spacing: 0.15em;
+    color: var(--muted); font-weight: 300;
+  }
+
+  .progress {
+    margin-top: 3rem;
+    width: 200px; height: 1px;
+    background: var(--line);
+    overflow: hidden; position: relative;
+  }
+  .progress-bar {
+    position: absolute; inset: 0;
+    background: var(--fg);
+    transform-origin: left;
+    transform: scaleX(0);
+    transition: transform 0.4s ease;
+  }
+  .progress-text {
+    margin-top: 0.8rem;
+    font-size: 0.65rem; letter-spacing: 0.25em;
+    color: var(--muted); height: 1em;
+    text-transform: uppercase;
+  }
+
+  #hint {
+    position: fixed;
+    bottom: 2.5rem; left: 50%; transform: translateX(-50%);
+    font-size: 0.65rem; letter-spacing: 0.3em;
+    text-transform: uppercase; color: var(--muted);
+    z-index: 10; opacity: 0;
+    transition: opacity 0.8s ease;
+    pointer-events: none; text-align: center; white-space: nowrap;
+  }
+  #hint.visible { opacity: 1; }
+  #hint.fade { opacity: 0; }
+
+  #controls {
+    position: fixed;
+    bottom: 1.5rem; right: 1.5rem;
+    display: flex; gap: 0.5rem;
+    z-index: 10; opacity: 0;
+    transition: opacity 0.8s ease;
+  }
+  #controls.visible { opacity: 1; }
+
+  .btn {
+    width: 42px; height: 42px;
+    border: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: var(--fg); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.25s, background 0.25s;
+  }
+  .btn:hover { border-color: var(--accent); background: rgba(0, 0, 0, 0.75); }
+  .btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.2; }
+
+  #brand {
+    position: fixed;
+    top: 1.5rem; left: 1.75rem;
+    font-weight: 300; font-size: 0.78rem;
+    color: var(--fg); z-index: 10; opacity: 0;
+    transition: opacity 0.8s ease;
+    pointer-events: none;
+    max-width: calc(100vw - 3rem);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #brand.visible { opacity: 0.85; }
+  #brand .slash { font-weight: 400; }
+  #brand .filename { color: var(--fg); text-transform: lowercase; }
+</style>
+</head>
+<body>
+
+<div id="stage"></div>
+
+<div id="brand">
+  <span class="filename">__FILENAME_NOEXT__</span><span class="slash">/</span>ai.oli
+</div>
+
+<div id="intro">
+  <div class="mark"><span class="slash">/</span>ai.oli<span class="cursor"></span></div>
+  <div class="sub">// Gaussian Splat Preview</div>
+  <div class="progress"><div class="progress-bar" id="bar"></div></div>
+  <div class="progress-text" id="ptext">Initialisation</div>
+</div>
+
+<div id="hint">Souris pour orbiter  -  Molette pour zoomer</div>
+
+<div id="controls">
+  <button class="btn" id="resetBtn" title="Recentrer la vue (R)">
+    <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+  </button>
+  <button class="btn" id="fsBtn" title="Plein ecran (F)">
+    <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+  </button>
+</div>
+
+<!-- Splat data embedded as base64. Decoded into a Blob URL at runtime. -->
+<script id="splat-data" type="text/plain">__B64__<\/script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.6/build/gaussian-splats-3d.module.min.js"
+  }
+}
+<\/script>
+
+<script type="module">
+import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
+
+const stage=document.getElementById('stage');
+const intro=document.getElementById('intro');
+const bar=document.getElementById('bar');
+const ptext=document.getElementById('ptext');
+const hint=document.getElementById('hint');
+const controls=document.getElementById('controls');
+const brand=document.getElementById('brand');
+const resetBtn=document.getElementById('resetBtn');
+const fsBtn=document.getElementById('fsBtn');
+
+function setProgress(p,l){bar.style.transform=`scaleX(${p})`;if(l!==undefined)ptext.textContent=l;}
+let hintFaded=false;function fadeHint(){if(hintFaded)return;hintFaded=true;hint.classList.add('fade');}
+function reveal(){setTimeout(()=>{intro.classList.add('hidden');controls.classList.add('visible');brand.classList.add('visible');hint.classList.add('visible');setTimeout(fadeHint,4500);},350);}
+
+// Initial camera state captured at builder time
+const INITIAL_CAM_POS    = __CAM_POS__;
+const INITIAL_CAM_TARGET = __CAM_TARGET__;
+const INITIAL_CAM_UP     = __CAM_UP__;
+
+let viewer = null;
+
+function resetView() {
+  if (!viewer) return;
+  viewer.camera.position.set(...INITIAL_CAM_POS);
+  if (viewer.controls && viewer.controls.target) {
+    viewer.controls.target.set(...INITIAL_CAM_TARGET);
+    viewer.controls.update();
+  }
+}
+resetBtn.addEventListener('click', resetView);
+
+function toggleFs() {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+  else document.exitFullscreen?.();
+}
+fsBtn.addEventListener('click', toggleFs);
+
+addEventListener('keydown', (e) => {
+  if (e.key === 'r' || e.key === 'R') resetView();
+  if (e.key === 'f' || e.key === 'F') toggleFs();
+});
+
+stage.addEventListener('pointerdown', () => stage.classList.add('dragging'));
+addEventListener('pointerup', () => stage.classList.remove('dragging'));
+stage.addEventListener('pointermove', fadeHint, { passive: true });
+stage.addEventListener('wheel', fadeHint, { passive: true });
+
+async function init() {
+  try {
+    setProgress(0.15, 'Decodage');
+    const b64Node = document.getElementById('splat-data');
+    const b64 = b64Node.textContent.trim();
+    b64Node.remove(); // free DOM memory after decode
+
+    // Decode base64 in chunks to avoid hangs on large files
+    setProgress(0.35, 'Decompression');
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+
+    setProgress(0.6, 'Construction');
+    viewer = new GaussianSplats3D.Viewer({
+      rootElement: stage,
+      cameraUp: INITIAL_CAM_UP,
+      initialCameraPosition: INITIAL_CAM_POS,
+      initialCameraLookAt: INITIAL_CAM_TARGET,
+      sharedMemoryForWorkers: false,
+      gpuAcceleratedSort: true,
+      antialiased: true,
+      sphericalHarmonicsDegree: 3,
+    });
+
+    await viewer.addSplatScene(url, {
+      format: __FORMAT__,
+      showLoadingUI: false,
+      progressiveLoad: false,
+    });
+
+    viewer.start();
+    setProgress(1, 'Pret');
+    reveal();
+  } catch (err) {
+    console.error(err);
+    setProgress(0, 'Erreur: ' + (err.message || err));
+  }
+}
+
+init();
+<\/script>
+</body>
+</html></script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.6/build/gaussian-splats-3d.module.min.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
+
+// DOM refs
+const stage         = document.getElementById('stage');
+const intro         = document.getElementById('intro');
+const dropzone      = document.getElementById('dropzone');
+const fileInput     = document.getElementById('fileInput');
+const progressEl    = document.getElementById('progress');
+const bar           = document.getElementById('bar');
+const ptext         = document.getElementById('ptext');
+const errorEl       = document.getElementById('error');
+const hint          = document.getElementById('hint');
+const controls      = document.getElementById('controls');
+const brand         = document.getElementById('brand');
+const brandFilename = document.getElementById('brandFilename');
+const resetBtn      = document.getElementById('resetBtn');
+const fsBtn         = document.getElementById('fsBtn');
+const exportBtn     = document.getElementById('exportBtn');
+const toast         = document.getElementById('toast');
+
+let viewer       = null;
+let currentBase64 = null;
+let currentName   = null;
+let currentFormat = 2; // 0=splat, 1=ksplat, 2=ply
+let currentBlobUrl = null;
+let initialCamPos    = [3, -3, 3];
+let initialCamTarget = [0, 0, 0];
+let initialCamUp     = [0, -1, 0]; // Y-down world (COLMAP/LichtFeld convention)
+
+const FORMAT_MAP = { 'splat': 0, 'ksplat': 1, 'ply': 2 };
+
+function setProgress(p, l) {
+  progressEl.classList.add('visible');
+  ptext.classList.add('visible');
+  bar.style.transform = `scaleX(${p})`;
+  if (l !== undefined) ptext.textContent = l;
+}
+
+function showError(msg) {
+  errorEl.textContent = msg;
+  errorEl.classList.add('visible');
+  progressEl.classList.remove('visible');
+  ptext.classList.remove('visible');
+}
+
+function clearError() {
+  errorEl.classList.remove('visible');
+}
+
+let hintFaded = false;
+function fadeHint() {
+  if (hintFaded) return;
+  hintFaded = true;
+  hint.classList.add('fade');
+}
+
+function reveal() {
+  setTimeout(() => {
+    intro.classList.add('hidden');
+    controls.classList.add('visible');
+    brand.classList.add('visible');
+    if (!hint.classList.contains('visible')) {
+      hint.classList.add('visible');
+      setTimeout(fadeHint, 5500);
+    }
+  }, 350);
+}
+
+function resetView() {
+  if (!viewer) return;
+  viewer.camera.position.set(...initialCamPos);
+  if (viewer.controls && viewer.controls.target) {
+    viewer.controls.target.set(...initialCamTarget);
+    viewer.controls.update();
+  }
+}
+resetBtn.addEventListener('click', resetView);
+
+function toggleFs() {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+  else document.exitFullscreen?.();
+}
+fsBtn.addEventListener('click', toggleFs);
+
+addEventListener('keydown', (e) => {
+  if (intro.classList.contains('hidden')) {
+    if (e.key === 'r' || e.key === 'R') resetView();
+    if (e.key === 'f' || e.key === 'F') toggleFs();
+    if (e.key === 'e' || e.key === 'E') exportHtml();
+  }
+});
+
+stage.addEventListener('pointerdown', () => stage.classList.add('dragging'));
+addEventListener('pointerup',   () => stage.classList.remove('dragging'));
+stage.addEventListener('pointermove', fadeHint, { passive: true });
+stage.addEventListener('wheel',       fadeHint, { passive: true });
+
+function stripExt(n)  { return (n || '').replace(/\.[^.]+$/, ''); }
+function sanitize(n)  {
+  return (n || 'splat')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^\w\-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'splat';
+}
+
+function formatBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+  if (b < 1024*1024*1024) return (b/(1024*1024)).toFixed(1) + ' MB';
+  return (b/(1024*1024*1024)).toFixed(2) + ' GB';
+}
+
+async function loadFile(file) {
+  clearError();
+
+  const ext = file.name.toLowerCase().split('.').pop();
+  if (!(ext in FORMAT_MAP)) {
+    showError(`Format non supporte (.${ext})`);
+    return;
+  }
+
+  // Soft warning above 800 MB (likely to crash the browser at export time)
+  if (file.size > 800 * 1024 * 1024) {
+    showError(`Fichier trop volumineux : ${formatBytes(file.size)} - max ~800 MB`);
+    return;
+  }
+
+  setProgress(0.1, 'Lecture');
+
+  try {
+    // Use FileReader for fast base64 conversion
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = (e) => resolve(e.target.result);
+      r.onerror = () => reject(new Error('lecture impossible'));
+      r.readAsDataURL(file);
+    });
+
+    const comma = dataUrl.indexOf(',');
+    currentBase64 = dataUrl.slice(comma + 1);
+    currentName   = file.name;
+    currentFormat = FORMAT_MAP[ext];
+
+    setProgress(0.3, 'Decodage');
+
+    // Build blob URL for mkkellogg
+    if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+    const arrayBuffer = await file.arrayBuffer();
+    const blob = new Blob([arrayBuffer]);
+    currentBlobUrl = URL.createObjectURL(blob);
+
+    // Dispose previous viewer if any
+    if (viewer) {
+      try { viewer.dispose(); } catch (e) {}
+      viewer = null;
+      // Remove any leftover canvas
+      stage.innerHTML = '';
+    }
+
+    setProgress(0.55, 'Construction');
+
+    viewer = new GaussianSplats3D.Viewer({
+      rootElement: stage,
+      cameraUp: initialCamUp,
+      initialCameraPosition: initialCamPos,
+      initialCameraLookAt: initialCamTarget,
+      sharedMemoryForWorkers: false,
+      gpuAcceleratedSort: true,
+      antialiased: true,
+      sphericalHarmonicsDegree: 3,
+    });
+
+    setProgress(0.75, 'Splat');
+    await viewer.addSplatScene(currentBlobUrl, {
+      format: currentFormat,
+      showLoadingUI: false,
+      progressiveLoad: false,
+    });
+
+    viewer.start();
+    setProgress(1, 'Pret');
+
+    brandFilename.textContent = stripExt(file.name);
+    reveal();
+  } catch (err) {
+    console.error(err);
+    showError(err.message || 'Erreur de chargement');
+  }
+}
+
+// Drag & drop -- attached aggressively to window/document.
+// (Note: the head script already blocks the default browser behavior at the
+//  window level. Here we only handle the visual feedback + actual loading.)
+let dragCount = 0;
+function onDragStart() {
+  dragCount++;
+  if (intro.classList.contains('hidden')) {
+    document.body.classList.add('dragging-file');
+  } else {
+    dropzone.classList.add('over');
+  }
+}
+function onDragEnd() {
+  dragCount = Math.max(0, dragCount - 1);
+  if (dragCount === 0) {
+    document.body.classList.remove('dragging-file');
+    dropzone.classList.remove('over');
+  }
+}
+window.addEventListener('dragenter', (e) => {
+  if (!e.dataTransfer?.types?.includes('Files')) return;
+  onDragStart();
+});
+window.addEventListener('dragleave', (e) => {
+  // dragleave fires on every child, so we use a counter
+  if (e.target === document || e.target === document.body || e.relatedTarget === null) {
+    onDragEnd();
+  } else {
+    dragCount = Math.max(0, dragCount - 1);
+    if (dragCount === 0) onDragEnd();
+  }
+});
+window.addEventListener('drop', (e) => {
+  dragCount = 0;
+  document.body.classList.remove('dragging-file');
+  dropzone.classList.remove('over');
+  const f = e.dataTransfer?.files?.[0];
+  if (f) loadFile(f);
+});
+
+fileInput.addEventListener('change', (e) => {
+  const f = e.target.files?.[0];
+  if (f) loadFile(f);
+});
+
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('visible');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => toast.classList.remove('visible'), 2400);
+}
+
+function captureCurrentCamera() {
+  if (!viewer || !viewer.camera) return;
+  const p = viewer.camera.position;
+  initialCamPos = [p.x, p.y, p.z];
+  if (viewer.controls && viewer.controls.target) {
+    const t = viewer.controls.target;
+    initialCamTarget = [t.x, t.y, t.z];
+  }
+  // cameraUp stays default unless we changed it
+}
+
+function exportHtml() {
+  if (!currentBase64) {
+    showToast('Charge un fichier d abord');
+    return;
+  }
+
+  showToast('Generation...');
+
+  // Capture current view as the "starting view" for the client
+  captureCurrentCamera();
+
+  // Anti-script-break trick: the embedded template has <\/script> sequences
+  // that we need to convert back to </script> in the output
+  const CLOSE_SCRIPT   = '<' + '/script>';
+  const ESCAPED_CLOSE  = '<' + '\\/script>';
+  const tplEl = document.getElementById('viewer-template');
+  let tpl = tplEl.textContent.split(ESCAPED_CLOSE).join(CLOSE_SCRIPT);
+
+  const baseName = sanitize(currentName);
+  const noExt    = stripExt(currentName);
+
+  tpl = tpl
+    .replaceAll('__TITLE__', noExt + ' /ai.oli')
+    .replaceAll('__FILENAME_NOEXT__', noExt)
+    .replaceAll('__FORMAT__', String(currentFormat))
+    .replaceAll('__CAM_POS__',    JSON.stringify(initialCamPos))
+    .replaceAll('__CAM_TARGET__', JSON.stringify(initialCamTarget))
+    .replaceAll('__CAM_UP__',     JSON.stringify(initialCamUp))
+    .replace('__B64__', currentBase64);
+
+  const blob = new Blob([tpl], { type: 'text/html' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = baseName + '.html';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+
+  const sizeNote = '~' + formatBytes(Math.round(currentBase64.length * 0.75));
+  setTimeout(() => showToast('Export OK ' + sizeNote), 80);
+}
+exportBtn.addEventListener('click', exportHtml);
+</script>
+</body>
+</html>
