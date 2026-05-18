@@ -1,94 +1,98 @@
 /*==============================================================================
-  GS_Capture.ms  —  v2.1
+  GS_Capture.ms  —  v2.2
   =======================
-  Synthetic dataset generator for Gaussian Splatting / NeRF training,
+  Synthetic dataset generator for Gaussian Splatting training,
   from 3ds Max + V-Ray indoor archviz scenes.
 
   Targets:
     - 3ds Max 2026 (compatible 2022+)
     - V-Ray 7 GPU (CUDA or RTX)
-    - Freecamera native (no Physical Camera class guessing across versions)
+    - Output: COLMAP sparse/0/ format (cameras.txt, images.txt, points3D.txt)
+    - Trainers tested: LichtFeld Studio, Brush
+
+  v2.2 changes vs v2.1:
+    * World axis convention: now Y-down (COLMAP/LichtFeld native), so the
+      splat opens right-side-up in LichtFeld with no post-fix.
+      Previous Y-up Nerfstudio convention + external fix_axis utility
+      removed. Brush users: the splat will appear flipped vertically,
+      orbit the camera to compensate.
+    * points3D.txt: now generates 50 000 random points spanning the scene
+      bounding box. LichtFeld refuses to load datasets with empty
+      points3D.txt; this makes the export usable out-of-the-box.
+    * Auto-recenter: X and Z only (the two horizontal axes in Max).
+      The Max Z axis (vertical, ground = 0) is preserved, so the splat
+      keeps its floor at world Y=0 in LichtFeld.
+    * transforms.json (Nerfstudio) export removed — was unused in our
+      pipeline. Use COLMAP for everything.
 
   v2.1 changes vs v2.0:
-    * Smart cubemap (NEW): on multi-Z layer setups, the lowest layer skips
-      the "down" face (already covered by mid/high layers) and the highest
-      layer skips the "up" face. Saves ~16% render time on 3+ layers with
-      no quality loss for archviz indoor scenes.
-    * COLMAP export (NEW): one-click button to generate sparse/0/cameras.txt,
-      images.txt, points3D.txt — Brush, LichtFeld, Nerfstudio all read
-      COLMAP more reliably than Nerfstudio JSON. Use it as fallback.
-    * Auto-recenter on JSON / COLMAP export: camera centroid → origin.
-      Required for GS trainers to converge on far-from-origin CAD scenes.
+    * Smart cubemap: on multi-Z layer setups, the lowest layer skips the
+      "down" face and the highest layer skips the "up" face. Saves ~16%
+      render time on 3+ layers with no quality loss for archviz indoor.
+    * Auto-recenter on export: camera centroid → origin. Required for
+      GS trainers to converge on far-from-origin CAD scenes.
 
   v2 changes vs v1:
     * Volume placement mode: pick a Box/Dummy/object as bounding volume,
       generate a 3D grid of stations inside.
-    * Cubemap camera mode: 6 cardinal-direction cameras per station
-      (front/back/left/right/up/down), wide FOV with overlap.
-    * Wall-distance raycast: auto-skip stations too close to geometry,
-      applied per 3D position (works correctly across multi-Z layers).
+    * Cubemap camera mode: 6 cardinal-direction cameras per station,
+      wide FOV with overlap.
+    * Wall-distance raycast: auto-skip stations too close to geometry.
     * Multi-Z layers: sample at multiple heights inside the volume.
     * Spline placement + custom yaw/pitch retained as alternative modes.
-    * Image filename includes face suffix for cubemap (e.g. 00001_front.png).
 
   Output structure:
       <outputFolder>/
         images/
-          00001_front.png   (cubemap mode)
-          00001_back.png
-          00001_left.png
+          0001_front.png   (cubemap mode, <station>_<face>.png)
+          0001_back.png
           ...
           OR
-          00001.png         (custom mode)
-          00002.png
+          00001.png        (custom mode, sequential index)
           ...
-        transforms.json     (Nerfstudio / Postshot / gsplat compatible)
-
-  Coordinate notes:
-    - 3ds Max world is Z-up, right-handed.
-    - Nerfstudio uses Y-up world, OpenGL camera convention (-Z forward).
-    - 3ds Max camera local convention is identical to OpenGL,
-      so only WORLD axes need conversion. The export does this automatically.
+        sparse/0/
+          cameras.txt      (OPENCV intrinsics)
+          images.txt       (extrinsics, Y-down world / OpenCV camera)
+          points3D.txt     (50k random init points)
 ==============================================================================*/
 
 
 /*----------------------------------------------------------------------------
-  0. PARAMS STRUCT (declared before the rollout that consumes it)
+  0. PARAMS STRUCT
 ----------------------------------------------------------------------------*/
 
 struct GSC_ParamsStruct (
     -- placement
     placementMode,           -- "volume" or "spline"
-    volumeObj,               -- node defining the bounding volume (for volume mode)
-    gridX, gridY,            -- grid spacing in X and Y (scene units)
-    zLayerCount,             -- number of vertical layers inside the volume
-    splineSpacing,           -- arc-length spacing for spline mode
-    eyeHeight,               -- height offset for spline mode (above spline)
-    jitterPos,               -- positional jitter (scene units)
+    volumeObj,
+    gridX, gridY,
+    zLayerCount,
+    splineSpacing,
+    eyeHeight,
+    jitterPos,
 
     -- wall avoidance
-    avoidWalls,              -- boolean: enable raycast check
-    minWallDist,             -- minimum distance to nearest geometry
+    avoidWalls,
+    minWallDist,
 
     -- camera mode
     cameraMode,              -- "cubemap" or "custom"
-    cubeFaces,               -- #(bool, bool, bool, bool, bool, bool) F/B/L/R/U/D
-    smartCubemap,            -- if true and zLayers >= 2: skip "down" on lowest
-                             --                            layer, "up" on highest
-    yawCount,                -- custom mode: number of yaw angles
-    pitchList,               -- custom mode: array of pitch angles (deg)
-    jitterAng,               -- angular jitter (deg)
+    cubeFaces,               -- 6 booleans, F/B/L/R/U/D
+    smartCubemap,
+    yawCount,
+    pitchList,
+    jitterAng,
 
     -- lens
-    focalMM, sensorMM,       -- focal length & sensor width in mm
-    nearClip, farClip,       -- near/far clip in scene units
+    focalMM, sensorMM,
+    nearClip, farClip,
 
     -- render
-    resW, resH,              -- output image resolution
-    imgFormat,               -- "png", "jpg", "tga", "exr"
-    resumeIfExists,          -- skip files that already exist
+    resW, resH,
+    imgFormat,
+    resumeIfExists,
 
-    -- output / misc
+    -- output
     outputFolder,
     seed
 )
@@ -98,12 +102,12 @@ struct GSC_ParamsStruct (
   1. GLOBALS
 ----------------------------------------------------------------------------*/
 
-global GSC_cameras       = #()          -- list of generated cameras
-global GSC_camMeta       = #()          -- parallel array of #(stationIdx, faceName)
-global GSC_inputSplines  = #()          -- splines selected by user (spline mode)
-global GSC_volumeObj     = undefined    -- volume box for volume mode
-global GSC_outputFolder  = ""           -- output base folder
-global GSC_dialog        = undefined    -- dialog handle
+global GSC_cameras       = #()
+global GSC_camMeta       = #()
+global GSC_inputSplines  = #()
+global GSC_volumeObj     = undefined
+global GSC_outputFolder  = ""
+global GSC_dialog        = undefined
 
 
 /*----------------------------------------------------------------------------
@@ -150,32 +154,35 @@ fn gscParseFloatList s = (
   3. COORDINATE / MATRIX CONVERSION
 ----------------------------------------------------------------------------*/
 
--- Axis-fix: Max world (Z-up) -> Nerfstudio world (Y-up).
--- In MaxScript row-vector form: (x, y, z) * axisFix = (x, z, -y)
-fn gscAxisFix = (
-    matrix3 [1, 0, 0] [0, 0, -1] [0, 1, 0] [0, 0, 0]
+-- Axis-fix: Max world (Z-up, right-handed) -> COLMAP world (Y-down).
+-- Mapping: (x, y, z)_max -> (x, -z, y)_colmap
+--
+-- Equivalent to: gscAxisFix v2.1 (Max Z-up -> Nerfstudio Y-up) followed by
+-- a 180-degree rotation around the X axis (the fix_axis_for_lichtfeld.py
+-- utility, now obsolete). The result is the convention LichtFeld Studio
+-- expects natively, so the splat opens right-side-up with no post-processing.
+fn gscMaxToColmapWorld = (
+    matrix3 [1, 0, 0] [0, 0, 1] [0, -1, 0] [0, 0, 0]
 )
 
--- Convert a Max camera-to-world matrix into Nerfstudio camera-to-world.
-fn gscMaxCamToNerf maxTM = (
-    maxTM * gscAxisFix()
+-- Convert a Max camera-to-world matrix into COLMAP camera-to-world
+-- (world is Y-down, camera is still OpenGL-local at this stage —
+-- the OpenCV camera flip is applied later).
+fn gscMaxCamToColmap maxTM = (
+    maxTM * gscMaxToColmapWorld()
 )
 
--- OpenGL → OpenCV camera-frame flip matrix.
--- OpenGL: +X right, +Y up, -Z forward  (Nerfstudio convention)
--- OpenCV: +X right, -Y up, +Z forward  (COLMAP convention)
--- The Y and Z axes flip sign. Apply as: c2w_cv = opencvFlip * c2w_gl
--- (MaxScript row-vector convention).
+-- OpenGL -> OpenCV camera-frame flip.
+-- OpenGL: +X right, +Y up,   -Z forward
+-- OpenCV: +X right, -Y up,   +Z forward   (COLMAP convention)
+-- Apply as: c2w_cv = opencvFlip * c2w_gl  (MaxScript row-vector convention)
 fn gscOpenCVFlip = (
     matrix3 [1, 0, 0] [0, -1, 0] [0, 0, -1] [0, 0, 0]
 )
 
--- Convert a 3x3 rotation (read from the top-left of a matrix3) to a quaternion
+-- Convert a 3x3 rotation (top-left of a matrix3) to a quaternion
 -- (qw, qx, qy, qz). Uses Shepperd's branched method for numerical stability.
--- Input: matrix3 m. We treat m.row1, m.row2, m.row3 as the rotation matrix
--- columns (which corresponds to "local axes in world coords" in MaxScript).
--- This matches the numpy column-vector convention used in standard quaternion
--- literature, so the output works as-is in COLMAP.
+-- The output works as-is in COLMAP images.txt.
 fn gscRotMatToQuat m = (
     local R00 = m.row1.x; local R01 = m.row2.x; local R02 = m.row3.x
     local R10 = m.row1.y; local R11 = m.row2.y; local R12 = m.row3.y
@@ -217,12 +224,10 @@ fn gscRotMatToQuat m = (
   4. SCENE GEOMETRY & RAYCAST (wall-avoidance)
 ----------------------------------------------------------------------------*/
 
--- Collect renderable scene geometry (exclude hidden/frozen/helpers).
 fn gscGetSceneGeometry = (
     local geo = #()
     for o in geometry do (
         if not o.isHidden and not o.isFrozen then (
-            -- Exclude our own generated cameras' layer
             local lyr = o.layer
             if lyr == undefined or lyr.name != "GS_Capture_Cameras" then (
                 append geo o
@@ -232,14 +237,11 @@ fn gscGetSceneGeometry = (
     geo
 )
 
--- Test if a station position is valid (i.e. not too close to scene geometry).
--- Casts 6 cardinal rays + 8 diagonal rays for robust check.
 fn gscIsStationValid pos minDist sceneGeo = (
     local dirs = #(
         [ 1, 0, 0], [-1, 0, 0],
         [ 0, 1, 0], [ 0,-1, 0],
         [ 0, 0, 1], [ 0, 0,-1],
-        -- diagonals (horizontal)
         [ 1, 1, 0], [-1, 1, 0], [ 1,-1, 0], [-1,-1, 0]
     )
     for d in dirs do (
@@ -257,11 +259,9 @@ fn gscIsStationValid pos minDist sceneGeo = (
 
 
 /*----------------------------------------------------------------------------
-  5. SPLINE SAMPLING (legacy mode, retained)
+  5. SPLINE SAMPLING (legacy mode)
 ----------------------------------------------------------------------------*/
 
--- Sample positions along a spline at given arc-length spacing.
--- Returns array of #(position, tangent) pairs in WORLD coords.
 fn gscSampleSpline splineObj spacing = (
     local samples = #()
     if splineObj == undefined then return samples
@@ -299,21 +299,15 @@ fn gscSampleSpline splineObj spacing = (
 
 
 /*----------------------------------------------------------------------------
-  6. VOLUME-BASED STATION GENERATION (new in v2)
+  6. VOLUME-BASED STATION GENERATION
 ----------------------------------------------------------------------------*/
 
--- Get the world-aligned bounding box of a node.
--- Returns #(p_min, p_max).
 fn gscGetWorldBBox obj = (
     local bb = nodeGetBoundingBox obj (matrix3 1)
     #(bb[1], bb[2])
 )
 
--- Generate station positions on a 3D grid inside the volume.
 -- Returns array of 3-tuples: #(point3 position, integer layerIdx, integer totalLayers).
---   layerIdx is 1-based; layerIdx == 1 is the LOWEST layer, layerIdx == totalLayers
---   is the HIGHEST. This is used downstream for smart cubemap (skip down/up faces
---   on extreme layers).
 fn gscGenerateStationsFromVolume params = (
     local stations = #()
     if params.volumeObj == undefined then return stations
@@ -322,7 +316,6 @@ fn gscGenerateStationsFromVolume params = (
     local minP = bb[1]
     local maxP = bb[2]
 
-    -- Number of grid steps in X and Y (avoid div by zero)
     local sx = if params.gridX > 0.001 then params.gridX else 100.0
     local sy = if params.gridY > 0.001 then params.gridY else 100.0
     local nx = ((maxP.x - minP.x) / sx) as integer
@@ -330,7 +323,6 @@ fn gscGenerateStationsFromVolume params = (
     if nx < 1 then nx = 1
     if ny < 1 then ny = 1
 
-    -- Build Z layers (centered inside volume)
     local zLayers = #()
     local nz = if params.zLayerCount < 1 then 1 else params.zLayerCount
     if nz == 1 then (
@@ -347,7 +339,6 @@ fn gscGenerateStationsFromVolume params = (
             ((maxP.y - minP.y) as string) + ", " + ((maxP.z - minP.z) as string) + \
             "]  grid " + (nx as string) + "x" + (ny as string) + "x" + (nz as string))
 
-    -- Cache scene geometry once for raycast (if needed)
     local sceneGeo = if params.avoidWalls then gscGetSceneGeometry() else #()
     local skippedWall = 0
     local skippedPerLayer = #()
@@ -357,21 +348,17 @@ fn gscGenerateStationsFromVolume params = (
         local z = zLayers[iz]
         for iy = 0 to ny do (
             local y = minP.y + iy * sy
-            if iy == ny then y = maxP.y    -- ensure max boundary hit
+            if iy == ny then y = maxP.y
             for ix = 0 to nx do (
                 local x = minP.x + ix * sx
                 if ix == nx then x = maxP.x
 
                 local p = [x, y, z]
 
-                -- Position jitter (horizontal only to keep on layer height)
                 if params.jitterPos > 0 then (
                     p = p + [gscJitter params.jitterPos, gscJitter params.jitterPos, 0]
                 )
 
-                -- Wall / object avoidance — tested at THIS specific 3D position,
-                -- so a station valid at mid-height can be invalid at low-height
-                -- (e.g. inside a table or piece of furniture).
                 if params.avoidWalls then (
                     if gscIsStationValid p params.minWallDist sceneGeo then (
                         append stations #(p, iz, nz)
@@ -405,7 +392,6 @@ fn gscGenerateStationsFromVolume params = (
   7. SPLINE-BASED STATION GENERATION (legacy)
 ----------------------------------------------------------------------------*/
 
--- Returns array of #(position, tangent) pairs.
 fn gscGenerateStationsFromSplines params = (
     local stations = #()
     if GSC_inputSplines.count == 0 then return stations
@@ -451,7 +437,7 @@ fn gscGenerateStationsFromSplines params = (
   8. CUBEMAP DIRECTIONS
 ----------------------------------------------------------------------------*/
 
--- Returns array of 6 #(faceName, lookDir) pairs in Max world (Z-up).
+-- 6 cardinal directions in Max world (Z-up).
 -- Indices: 1=front(+Y), 2=back(-Y), 3=left(-X), 4=right(+X), 5=up(+Z), 6=down(-Z).
 fn gscCubemapDirs = (
     #(
@@ -469,8 +455,6 @@ fn gscCubemapDirs = (
   9. CUSTOM YAW/PITCH LOOK DIRECTION
 ----------------------------------------------------------------------------*/
 
--- Given a base tangent (or [0,1,0] if none) and yaw/pitch offsets in degrees,
--- return normalized world-space look direction.
 fn gscComputeLookDir tangent yawDeg pitchDeg = (
     local horizTan = [tangent.x, tangent.y, 0]
     if length horizTan < 0.0001 then horizTan = [0, 1, 0]
@@ -493,20 +477,16 @@ fn gscComputeLookDir tangent yawDeg pitchDeg = (
   10. CAMERA CREATION
 ----------------------------------------------------------------------------*/
 
--- Horizontal FOV (deg) from focal length and sensor width (both mm).
 fn gscFocalToHFOV focalMM sensorWidthMM = (
     2.0 * atan(sensorWidthMM / (2.0 * focalMM))
 )
 
--- Create a Freecamera at pos, oriented so it looks along lookDir.
--- Max camera looks down local -Z, so local +Z (in world) = -lookDir.
 fn gscMakeCamera camName pos lookDir hfov nearclip farclip parentLayer = (
     local cam = Freecamera fov:hfov nearclip:nearclip farclip:farclip name:camName
 
     local zAxis = normalize (-lookDir)
     local worldUp = [0, 0, 1]
 
-    -- Edge case: looking straight up/down
     if (abs (dot zAxis worldUp)) > 0.999 then worldUp = [0, 1, 0]
 
     local xAxis = normalize (cross worldUp zAxis)
@@ -551,10 +531,9 @@ fn gscDeleteGeneratedCameras = (
 )
 
 
--- Scan the GS_Capture_Cameras layer and rebuild GSC_cameras + GSC_camMeta
--- from existing camera nodes in the scene. Useful after a Max restart, so
--- that "Render Dataset" / "Export JSON" can resume without re-generating.
--- Returns the number of cameras found.
+-- Rebuild GSC_cameras + GSC_camMeta from existing nodes in the
+-- GS_Capture_Cameras layer. Useful after a Max restart so Render and Export
+-- work without forcing a full re-Generate.
 fn gscScanExistingCameras = (
     local lyr = LayerManager.getLayerFromName "GS_Capture_Cameras"
     if lyr == undefined then return 0
@@ -562,32 +541,23 @@ fn gscScanExistingCameras = (
     local nodes = #()
     lyr.nodes &nodes
 
-    -- Filter to cameras only
     local foundCams = #()
     for n in nodes do (
         if (superclassof n == Camera) then append foundCams n
     )
     if foundCams.count == 0 then return 0
 
-    -- Sort by name so that array order matches the original generation order
-    -- (alphabetical sort on our naming scheme preserves station + angle order)
     qsort foundCams (fn cmpByName a b = (
         if a.name < b.name then -1 else (if a.name > b.name then 1 else 0)
     ))
 
-    -- Rebuild parallel arrays
     GSC_cameras = #()
     GSC_camMeta = #()
 
     for n in foundCams do (
-        -- Camera name format:
-        --   cubemap mode: "GSCam_<stationIdx>_<faceName>"      e.g. GSCam_0001_front
-        --   custom mode:  "GSCam_<stationIdx>_y<yaw>_p<pitch>" e.g. GSCam_0001_y00_p-15
         local parts = filterString n.name "_"
         if parts.count >= 3 then (
             local stationIdx = parts[2] as integer
-            -- Re-glue everything after the station as the meta tag (faceName,
-            -- or "y00_p-15" etc. — keeps underscores in custom mode)
             local faceTag = parts[3]
             for i = 4 to parts.count do faceTag += "_" + parts[i]
 
@@ -605,7 +575,6 @@ fn gscScanExistingCameras = (
 ----------------------------------------------------------------------------*/
 
 fn gscGenerateCameras params = (
-    -- Pre-checks
     if params.placementMode == "volume" then (
         if params.volumeObj == undefined or not (isValidNode params.volumeObj) then (
             messageBox "Pick a volume object first (Box, Dummy, or any geometry)." \
@@ -619,7 +588,6 @@ fn gscGenerateCameras params = (
         )
     )
 
-    -- Cleanup prior
     gscDeleteGeneratedCameras()
     seed (params.seed)
 
@@ -628,9 +596,6 @@ fn gscGenerateCameras params = (
     local idx = 0
     local stationIdx = 0
 
-    -- Get stations — formats differ by placement mode:
-    --   volume mode: 3-tuple  #(point3 pos, integer layerIdx, integer totalLayers)
-    --   spline mode: 2-tuple  #(point3 pos, point3 tangent)
     local stations = #()
     local hasTangents = false
     if params.placementMode == "volume" then (
@@ -646,7 +611,6 @@ fn gscGenerateCameras params = (
         return false
     )
 
-    -- Sanity warn for huge counts
     local nPerStation = if params.cameraMode == "cubemap" then (
         local c = 0
         for f in params.cubeFaces do if f then c += 1
@@ -661,7 +625,6 @@ fn gscGenerateCameras params = (
         if not ok then return false
     )
 
-    -- Generate cameras at each station
     progressStart "GS_Capture generating cameras..."
 
     for sIdx = 1 to stations.count while (not getProgressCancel()) do (
@@ -672,24 +635,17 @@ fn gscGenerateCameras params = (
         local totalLayers = 0
 
         if hasTangents then (
-            -- Spline mode: 2-tuple #(point3, tangent)
             pos = stations[sIdx][1]
             tan = stations[sIdx][2]
         ) else (
-            -- Volume mode: 3-tuple #(point3, layerIdx, totalLayers)
             pos = stations[sIdx][1]
             layerIdx = stations[sIdx][2]
             totalLayers = stations[sIdx][3]
         )
 
         if params.cameraMode == "cubemap" then (
-            -- Cubemap: 6 cardinal directions in world space.
-            -- Faces array index: 1=front, 2=back, 3=left, 4=right, 5=up, 6=down
             local dirs = gscCubemapDirs()
 
-            -- Build effective face mask: start from user's checkbox choices,
-            -- then mask further with smart cubemap (skip "down" on lowest layer,
-            -- "up" on highest layer — those views are redundant with mid layers).
             local effFaces = #(params.cubeFaces[1], params.cubeFaces[2], \
                                params.cubeFaces[3], params.cubeFaces[4], \
                                params.cubeFaces[5], params.cubeFaces[6])
@@ -710,7 +666,6 @@ fn gscGenerateCameras params = (
                 )
             )
         ) else (
-            -- Custom yaw + pitch
             for yawIdx = 0 to (params.yawCount - 1) do (
                 local yawDeg = (360.0 / params.yawCount) * yawIdx
                 for pitchDeg in params.pitchList do (
@@ -788,7 +743,6 @@ fn gscRenderBatch params = (
         ) else (
             local cam = GSC_cameras[i]
             if isValidNode cam then (
-                -- Build filename: in cubemap mode, include face suffix
                 local meta = GSC_camMeta[i]
                 local fname
                 if params.cameraMode == "cubemap" then (
@@ -831,150 +785,25 @@ fn gscRenderBatch params = (
 
 
 /*----------------------------------------------------------------------------
-  14. JSON EXPORT (transforms.json, Nerfstudio convention)
-----------------------------------------------------------------------------*/
-
-fn gscExportTransformsJson params = (
-    if GSC_cameras.count == 0 then (
-        local nFound = gscScanExistingCameras()
-        if nFound > 0 then (
-            gscLog ("Detected " + (nFound as string) + " existing cameras from scene layer.")
-        ) else (
-            messageBox "No cameras to export. Generate first." title:"GS_Capture"
-            return false
-        )
-    )
-    if params.outputFolder == "" then (
-        messageBox "Pick an output folder first." title:"GS_Capture"
-        return false
-    )
-
-    gscEnsureFolder params.outputFolder
-
-    -- Intrinsics
-    local flXPx = (params.resW as float / params.sensorMM) * params.focalMM
-    local flYPx = flXPx
-    local cxPx  = (params.resW as float) / 2.0
-    local cyPx  = (params.resH as float) / 2.0
-
-    -- AUTO-RECENTER: compute centroid of all camera positions (in Nerfstudio
-    -- coords) and translate all poses so centroid sits at origin.
-    -- Critical: GS trainers (Brush, Nerfstudio, Postshot...) fail to initialize
-    -- silently when the scene is far from origin (typical for CAD-imported
-    -- scenes with georeferenced or absolute coordinates). The visual result
-    -- is identical — only the scene's coordinate system origin changes.
-    local centroidX = 0.0
-    local centroidY = 0.0
-    local centroidZ = 0.0
-    local nValid = 0
-    for cam in GSC_cameras do (
-        if isValidNode cam then (
-            local nerfTM = gscMaxCamToNerf cam.transform
-            centroidX += nerfTM.row4.x
-            centroidY += nerfTM.row4.y
-            centroidZ += nerfTM.row4.z
-            nValid += 1
-        )
-    )
-    if nValid > 0 then (
-        centroidX /= nValid
-        centroidY /= nValid
-        centroidZ /= nValid
-    )
-    gscLog ("Auto-recenter: scene centroid was at (" + \
-            (centroidX as string) + ", " + (centroidY as string) + ", " + \
-            (centroidZ as string) + ") — translated to origin in JSON.")
-
-    local out = stringStream ""
-
-    format "{\n" to:out
-    format "  \"camera_model\": \"OPENCV\",\n" to:out
-    format "  \"fl_x\": %,\n" flXPx to:out
-    format "  \"fl_y\": %,\n" flYPx to:out
-    format "  \"cx\": %,\n" cxPx to:out
-    format "  \"cy\": %,\n" cyPx to:out
-    format "  \"w\": %,\n" params.resW to:out
-    format "  \"h\": %,\n" params.resH to:out
-    format "  \"k1\": 0.0, \"k2\": 0.0, \"p1\": 0.0, \"p2\": 0.0,\n" to:out
-    format "  \"frames\": [\n" to:out
-
-    local n = GSC_cameras.count
-    local writtenCount = 0
-
-    for i = 1 to n do (
-        local cam = GSC_cameras[i]
-        if isValidNode cam then (
-            local nerfTM = gscMaxCamToNerf cam.transform
-            local r1 = nerfTM.row1
-            local r2 = nerfTM.row2
-            local r3 = nerfTM.row3
-            local r4 = nerfTM.row4
-
-            -- Apply auto-recenter to position (translation only, not rotation)
-            local tx = r4.x - centroidX
-            local ty = r4.y - centroidY
-            local tz = r4.z - centroidZ
-
-            -- Image path (forward slashes for JSON portability)
-            local meta = GSC_camMeta[i]
-            local imgFile
-            if params.cameraMode == "cubemap" then (
-                imgFile = "images/" + (padInt meta[1] 4) + "_" + meta[2] + \
-                          "." + params.imgFormat
-            ) else (
-                imgFile = "images/" + (padInt i 5) + "." + params.imgFormat
-            )
-
-            if writtenCount > 0 then format ",\n" to:out
-            format "    {\n" to:out
-            format "      \"file_path\": \"%\",\n" imgFile to:out
-            format "      \"transform_matrix\": [\n" to:out
-            format "        [%, %, %, %],\n" r1.x r2.x r3.x tx to:out
-            format "        [%, %, %, %],\n" r1.y r2.y r3.y ty to:out
-            format "        [%, %, %, %],\n" r1.z r2.z r3.z tz to:out
-            format "        [0.0, 0.0, 0.0, 1.0]\n" to:out
-            format "      ]\n" to:out
-            format "    }" to:out
-            writtenCount += 1
-        )
-    )
-
-    format "\n  ]\n}\n" to:out
-
-    local jsonPath = params.outputFolder + "\\transforms.json"
-    local f = createFile jsonPath
-    if f == undefined then (
-        messageBox ("Could not write " + jsonPath) title:"GS_Capture"
-        return false
-    )
-    format "%" (out as string) to:f
-    close f
-
-    gscLog ("transforms.json written: " + jsonPath + "  (" + (writtenCount as string) + " frames)")
-    true
-)
-
-
-/*----------------------------------------------------------------------------
-  14b. COLMAP EXPORT
+  14. COLMAP EXPORT
 ----------------------------------------------------------------------------*/
 
 -- Generate COLMAP-format sparse reconstruction files into <outputFolder>/sparse/0/:
 --   cameras.txt   - intrinsics (OPENCV model, single shared camera)
---   images.txt    - extrinsics (quaternion + translation in OpenCV/COLMAP convention)
---   points3D.txt  - 3D points (empty; trainers will random-init from cameras)
+--   images.txt    - extrinsics (quaternion + translation in COLMAP convention)
+--   points3D.txt  - 50 000 random init points spanning the scene bounding box
+--                   (LichtFeld refuses to load datasets with an empty points3D)
 --
--- COLMAP format is more universally supported than Nerfstudio JSON. Brush,
--- LichtFeld Studio, and Postshot all read it reliably. Use this when the JSON
--- path triggers parser bugs (Brush issue #269 in particular).
---
--- Coordinate conversion math (verified by hand on cubemap faces):
---   1. Take Max camera transform -> apply gscAxisFix() -> c2w in Nerfstudio
---      (OpenGL: -Z forward, +Y up).
---   2. c2w_cv = gscOpenCVFlip() * c2w_gl    (flip Y & Z axes of cam local frame)
---   3. Apply centroid recenter to translation (same as JSON export).
+-- Coordinate conversion chain:
+--   1. cam.transform (Max world Z-up, OpenGL local) * gscMaxToColmapWorld()
+--      -> c2w with world Y-down (COLMAP/LichtFeld native), camera still OpenGL.
+--   2. cvFlip * c2w -> camera switched to OpenCV local.
+--   3. Apply centroid recenter to translation. We recenter the two horizontal
+--      axes only (X and Z in the new world, = X and Y in Max). The vertical
+--      axis (Y in new world, = Z in Max) is preserved so Max's ground plane
+--      Z=0 stays at world Y=0 in the splat.
 --   4. w2c = inverse(c2w_cv)
---   5. Decompose w2c into quaternion (qw, qx, qy, qz) and translation (tx, ty, tz).
+--   5. Decompose w2c into quaternion (qw, qx, qy, qz) and translation.
 fn gscExportColmapFiles params = (
     if GSC_cameras.count == 0 then (
         local nFound = gscScanExistingCameras()
@@ -990,28 +819,28 @@ fn gscExportColmapFiles params = (
         return false
     )
 
-    -- Build target dir: <outputFolder>\sparse\0\
     local sparseDir = params.outputFolder + "\\sparse\\0"
     gscEnsureFolder (params.outputFolder + "\\sparse")
     gscEnsureFolder sparseDir
 
-    -- Compute auto-recenter centroid (same logic as JSON export)
-    local centroidX = 0.0; local centroidY = 0.0; local centroidZ = 0.0
+    -- Compute recenter centroid (X and Z only — Y is vertical, preserved)
+    local centroidX = 0.0
+    local centroidZ = 0.0
     local nValid = 0
     for cam in GSC_cameras do (
         if isValidNode cam then (
-            local nerfTM = gscMaxCamToNerf cam.transform
-            centroidX += nerfTM.row4.x
-            centroidY += nerfTM.row4.y
-            centroidZ += nerfTM.row4.z
+            local c2wNew = gscMaxCamToColmap cam.transform
+            centroidX += c2wNew.row4.x
+            centroidZ += c2wNew.row4.z
             nValid += 1
         )
     )
     if nValid > 0 then (
-        centroidX /= nValid; centroidY /= nValid; centroidZ /= nValid
+        centroidX /= nValid
+        centroidZ /= nValid
     )
-    gscLog ("COLMAP auto-recenter: centroid (" + (centroidX as string) + ", " + \
-            (centroidY as string) + ", " + (centroidZ as string) + ") -> origin.")
+    gscLog ("Auto-recenter (horizontal only, vertical preserved): centroid (X=" + \
+            (centroidX as string) + ", Z=" + (centroidZ as string) + ") -> origin.")
 
     -- === cameras.txt ===
     local camPath = sparseDir + "\\cameras.txt"
@@ -1020,7 +849,6 @@ fn gscExportColmapFiles params = (
         messageBox ("Could not write " + camPath) title:"GS_Capture"
         return false
     )
-    -- Intrinsics: convert focal-in-mm to focal-in-pixels using sensor width
     local flXPx = (params.resW as float / params.sensorMM) * params.focalMM
     local flYPx = flXPx
     local cxPx  = (params.resW as float) / 2.0
@@ -1033,6 +861,7 @@ fn gscExportColmapFiles params = (
     close cFile
 
     -- === images.txt ===
+    -- Also collect recentered camera positions for the points3D scale estimate.
     local imgPath = sparseDir + "\\images.txt"
     local iFile = createFile imgPath
     if iFile == undefined then (
@@ -1046,28 +875,30 @@ fn gscExportColmapFiles params = (
 
     local cvFlip = gscOpenCVFlip()
     local writtenCount = 0
+    local maxAbsX = 0.0; local maxAbsY = 0.0; local maxAbsZ = 0.0
 
     for i = 1 to GSC_cameras.count do (
         local cam = GSC_cameras[i]
         if isValidNode cam then (
-            -- Step 1+2: Max -> Nerfstudio (OpenGL) -> OpenCV
-            local c2wGl = gscMaxCamToNerf cam.transform
-            local c2wCv = cvFlip * c2wGl
+            local c2wNew = gscMaxCamToColmap cam.transform
+            local c2wCv = cvFlip * c2wNew
 
-            -- Step 3: apply centroid recenter to translation only
             c2wCv.row4 = [c2wCv.row4.x - centroidX, \
-                          c2wCv.row4.y - centroidY, \
+                          c2wCv.row4.y, \
                           c2wCv.row4.z - centroidZ]
 
-            -- Step 4: invert for world-to-camera
+            -- Track recentered camera position bbox (for points3D scale)
+            local px = c2wCv.row4.x; local py = c2wCv.row4.y; local pz = c2wCv.row4.z
+            if (abs px) > maxAbsX then maxAbsX = abs px
+            if (abs py) > maxAbsY then maxAbsY = abs py
+            if (abs pz) > maxAbsZ then maxAbsZ = abs pz
+
             local w2c = inverse c2wCv
 
-            -- Step 5: extract quaternion + translation
             local q = gscRotMatToQuat w2c
             local qw = q[1]; local qx = q[2]; local qy = q[3]; local qz = q[4]
             local tx = w2c.row4.x; local ty = w2c.row4.y; local tz = w2c.row4.z
 
-            -- Image filename (no "images/" prefix — COLMAP looks in images/ by default)
             local meta = GSC_camMeta[i]
             local imgName
             if params.cameraMode == "cubemap" then (
@@ -1078,23 +909,51 @@ fn gscExportColmapFiles params = (
 
             format "% % % % % % % % 1 %\n" \
                 i qw qx qy qz tx ty tz imgName to:iFile
-            format "\n" to:iFile    -- empty POINTS2D line (required by COLMAP format)
+            format "\n" to:iFile    -- empty POINTS2D line (required by COLMAP)
             writtenCount += 1
         )
     )
     close iFile
 
-    -- === points3D.txt (empty initialization) ===
+    -- === points3D.txt (50k random init points) ===
+    -- LichtFeld refuses to load datasets where points3D.txt has "Number of points: 0".
+    -- Trainers use these points as the initial Gaussian seed positions.
+    -- We span a cube ~1.5x the recentered camera bbox; the trainer prunes irrelevant
+    -- points during training, so over-spanning is harmless.
+    local boxHalfX = maxAbsX * 1.5
+    local boxHalfY = maxAbsY * 1.5
+    local boxHalfZ = maxAbsZ * 1.5
+    local boxHalf = amax #(boxHalfX, boxHalfY, boxHalfZ)
+    if boxHalf < 100.0 then boxHalf = 500.0
+    gscLog ("points3D scene scale: +/-" + (boxHalf as string) + " units, generating 50000 points...")
+
+    local N = 50000
+    seed 12345
+    local sb = stringStream ""
+    format "# 3D point list with one line of data per point:\n" to:sb
+    format "#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n" to:sb
+    format "# Number of points: %\n" N to:sb
+    for i = 1 to N do (
+        local x = (random -1.0 1.0) * boxHalf
+        local y = (random -1.0 1.0) * boxHalf
+        local z = (random -1.0 1.0) * boxHalf
+        local r = random 80 175
+        local g = random 80 175
+        local b = random 80 175
+        format "% % % % % % % 0.0 1 0\n" i x y z r g b to:sb
+    )
     local pPath = sparseDir + "\\points3D.txt"
     local pFile = createFile pPath
-    format "# 3D point list with one line of data per point:\n" to:pFile
-    format "#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n" to:pFile
-    format "# Number of points: 0\n" to:pFile
+    if pFile == undefined then (
+        messageBox ("Could not write " + pPath) title:"GS_Capture"
+        return false
+    )
+    format "%" (sb as string) to:pFile
     close pFile
 
-    gscLog ("COLMAP files written to: " + sparseDir + "  (" + (writtenCount as string) + " frames)")
+    gscLog ("COLMAP files written to: " + sparseDir + "  (" + (writtenCount as string) + " frames, " + (N as string) + " init points)")
     messageBox ("COLMAP files exported to:\n" + sparseDir + "\n\n" + \
-                "Drop the parent folder (containing 'images/' and 'sparse/') into Brush / LichtFeld.") \
+                "Drop the parent folder (containing 'images/' and 'sparse/') into LichtFeld / Brush.") \
                title:"GS_Capture"
     true
 )
@@ -1106,8 +965,8 @@ fn gscExportColmapFiles params = (
 
 try (destroyDialog GSC_rollout) catch ()
 
-rollout GSC_rollout "GS Capture v2.1  —  Gaussian Splatting Dataset Generator" \
-                    width:430 height:830 (
+rollout GSC_rollout "GS Capture v2.2  —  Gaussian Splatting Dataset Generator" \
+                    width:430 height:800 (
 
     /* ---- Placement mode ---- */
     group "1. Placement mode" (
@@ -1166,7 +1025,7 @@ rollout GSC_rollout "GS Capture v2.1  —  Gaussian Splatting Dataset Generator"
 
     /* ---- Lens ---- */
     group "5. Lens" (
-        spinner spnFocal  "Focal length (mm) — 14mm = 104° HFOV (cubemap default)" \
+        spinner spnFocal  "Focal length (mm) - 14mm = 104deg HFOV (cubemap default)" \
                           range:[6, 400, 14] type:#float fieldwidth:70 align:#left
         spinner spnSensor "Sensor width (mm)" range:[8, 70, 36] type:#float fieldwidth:70 align:#left
         spinner spnNear   "Near clip (units)" range:[0.01, 100, 1] type:#float fieldwidth:70 align:#left
@@ -1194,9 +1053,8 @@ rollout GSC_rollout "GS Capture v2.1  —  Gaussian Splatting Dataset Generator"
         button btnDelete      "Delete cams"             width:125 height:22
         button btnTestRender  "Test render"             width:125 height:22
         button btnRenderAll   "2) Render Dataset (V-Ray)" width:380 height:26
-        button btnExportJson  "3a) Export transforms.json (Nerfstudio)" width:380 height:24
-        button btnExportColmap "3b) Export COLMAP files (more compatible)" width:380 height:24
-        button btnRunAll      "RUN ALL (1 + 2 + 3a + 3b)" width:380 height:30
+        button btnExportColmap "3) Export COLMAP files" width:380 height:24
+        button btnRunAll      "RUN ALL (1 + 2 + 3)"     width:380 height:30
     )
 
     label lblTotalEst "Estimated total cameras: --" align:#left width:380
@@ -1241,17 +1099,16 @@ rollout GSC_rollout "GS Capture v2.1  —  Gaussian Splatting Dataset Generator"
 
     fn updateEstimate = (
         local nPer = 0
-        local smartSavings = 0    -- per-station face count lost to smart cubemap
+        local smartSavings = 0
 
         if rdoCamera.state == 1 then (
             for f in #(chkFront.checked, chkBack.checked, chkLeft.checked, \
                        chkRight.checked, chkUp.checked, chkDown.checked) do (
                 if f then nPer += 1
             )
-            -- Smart cubemap: lowest layer loses "down" (idx 6), highest loses "up" (idx 5)
             if chkSmartCube.checked and spnZLayers.value >= 2 then (
-                if chkDown.checked then smartSavings += 1    -- 1 station's worth on low layer
-                if chkUp.checked then smartSavings += 1      -- 1 station's worth on high layer
+                if chkDown.checked then smartSavings += 1
+                if chkUp.checked then smartSavings += 1
             )
         ) else (
             nPer = spnYawCount.value * (gscParseFloatList edtPitches.text).count
@@ -1265,16 +1122,15 @@ rollout GSC_rollout "GS Capture v2.1  —  Gaussian Splatting Dataset Generator"
             local stationsPerLayer = nx * ny
             local totalStations = stationsPerLayer * spnZLayers.value
             stationsEst = (totalStations as string) + " (max)"
-            -- Total cams = (all layers full) - (smart cubemap removals on extreme layers)
             local totalCams = totalStations * nPer - stationsPerLayer * smartSavings
-            lblTotalEst.text = "Estimate: " + stationsEst + " stations × ~" + (nPer as string) + \
+            lblTotalEst.text = "Estimate: " + stationsEst + " stations x ~" + (nPer as string) + \
                                 " cams = ~" + (totalCams as string) + " cameras" + \
                                 (if smartSavings > 0 then \
                                     (" (smart cubemap saves ~" + ((stationsPerLayer * smartSavings) as string) + ")") \
                                  else "")
         ) else (
             lblTotalEst.text = "Cams per station: " + (nPer as string) + \
-                                " — Generated: " + (GSC_cameras.count as string)
+                                " - Generated: " + (GSC_cameras.count as string)
         )
     )
 
@@ -1302,7 +1158,7 @@ rollout GSC_rollout "GS Capture v2.1  —  Gaussian Splatting Dataset Generator"
                 append GSC_inputSplines o
         )
         if GSC_inputSplines.count == 0 then (
-            lblSplines.text = "(no splines in selection — select splines first)"
+            lblSplines.text = "(no splines in selection - select splines first)"
         ) else (
             local names = ""
             for s in GSC_inputSplines do (
@@ -1369,11 +1225,6 @@ rollout GSC_rollout "GS Capture v2.1  —  Gaussian Splatting Dataset Generator"
         gscRenderBatch p
     )
 
-    on btnExportJson pressed do (
-        local p = buildParams()
-        gscExportTransformsJson p
-    )
-
     on btnExportColmap pressed do (
         local p = buildParams()
         gscExportColmapFiles p
@@ -1382,9 +1233,8 @@ rollout GSC_rollout "GS Capture v2.1  —  Gaussian Splatting Dataset Generator"
     on btnRunAll pressed do (
         local p = buildParams()
 
-        -- Smart RUN ALL: if cameras already exist (auto-detected from scene)
-        -- and the user has NOT picked a fresh input (volume/spline), skip the
-        -- Generate step. This is the typical "resume after restart" workflow.
+        -- Resume-after-restart logic: if cameras already exist in the scene
+        -- and no fresh input has been picked, skip Generate.
         local skipGenerate = false
         if GSC_cameras.count > 0 then (
             local needVolume = (p.placementMode == "volume" and GSC_volumeObj == undefined)
@@ -1402,7 +1252,6 @@ rollout GSC_rollout "GS Capture v2.1  —  Gaussian Splatting Dataset Generator"
 
         if proceed then (
             if gscRenderBatch p then (
-                gscExportTransformsJson p
                 gscExportColmapFiles p
             )
         )
@@ -1424,9 +1273,6 @@ rollout GSC_rollout "GS Capture v2.1  —  Gaussian Splatting Dataset Generator"
     on chkDown changed st do updateEstimate()
     on chkSmartCube changed st do updateEstimate()
     on GSC_rollout open do (
-        -- After a Max restart, the script globals are reset but the cameras
-        -- may still exist in the scene. Auto-detect them so Render / Export
-        -- works without forcing the user to re-Generate.
         local nFound = gscScanExistingCameras()
         if nFound > 0 then (
             gscLog ("Auto-detected " + (nFound as string) + " existing cameras from scene.")
