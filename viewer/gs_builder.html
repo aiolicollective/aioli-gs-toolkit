@@ -3,20 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>/ai.oli — GS Builder</title>
-
-<!-- Blocks the browser's default "open file as URL" behavior IMMEDIATELY,
-     before the ES module loads. Without this, dropping a file outside the
-     dropzone (or before module script init) opens it as a binary in a new tab. -->
+<title>/ai.oli — Gaussian Splat Builder</title>
+ 
+<!--
+  Bloque le comportement par defaut du navigateur (ouvrir le fichier comme URL)
+  AVANT que le module ES ne se charge. Sans ca, deposer un fichier hors de la
+  dropzone (ou avant l'init JS) ouvre le HTML comme une nouvelle page.
+-->
 <script>
   window.addEventListener('dragenter', e => { e.preventDefault(); }, false);
   window.addEventListener('dragover',  e => { e.preventDefault(); }, false);
   window.addEventListener('drop',      e => { e.preventDefault(); }, false);
 </script>
-
+ 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@200;300;400;500&display=swap" rel="stylesheet">
+ 
 <style>
   :root {
     --bg: #000000;
@@ -24,6 +27,7 @@
     --muted: rgba(255, 255, 255, 0.5);
     --line: rgba(255, 255, 255, 0.14);
     --accent: #ffffff;
+    --warn: #ff5040;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
@@ -36,10 +40,20 @@
     user-select: none; -webkit-user-select: none;
     touch-action: none;
   }
-  #stage { position: fixed; inset: 0; cursor: grab; }
-  #stage.dragging { cursor: grabbing; }
-  #stage canvas { display: block; }
-
+ 
+  /* --- Stage (iframe holder) --------------------------------------- */
+  #stage {
+    position: fixed; inset: 0;
+    background: var(--bg);
+  }
+  #viewer {
+    width: 100%; height: 100%;
+    border: 0;
+    display: block;
+    background: var(--bg);
+  }
+ 
+  /* --- Intro overlay ----------------------------------------------- */
   #intro {
     position: fixed; inset: 0;
     background: var(--bg);
@@ -50,7 +64,7 @@
     padding: 2rem;
   }
   #intro.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
-
+ 
   .mark {
     font-weight: 300;
     font-size: clamp(2.2rem, 6vw, 4.2rem);
@@ -67,7 +81,7 @@
     animation: blink 1.05s steps(1, end) infinite;
   }
   @keyframes blink { 50% { opacity: 0; } }
-
+ 
   .sub {
     margin-top: 1.5rem;
     font-size: 0.7rem;
@@ -75,7 +89,8 @@
     color: var(--muted);
     font-weight: 300;
   }
-
+ 
+  /* --- Drop zone --------------------------------------------------- */
   #dropzone {
     margin-top: 3rem;
     padding: 2.5rem 3rem;
@@ -84,7 +99,7 @@
     display: flex; flex-direction: column;
     align-items: center; gap: 1rem;
     transition: border-color 0.3s, background 0.3s;
-    min-width: min(420px, 90vw);
+    min-width: min(440px, 90vw);
     text-align: center;
   }
   #dropzone:hover, #dropzone.over {
@@ -109,9 +124,16 @@
     color: var(--muted);
   }
   .dz-or u { text-decoration: underline; text-underline-offset: 4px; color: var(--fg); }
-  .dz-formats { font-size: 0.55rem; letter-spacing: 0.25em; color: var(--muted); margin-top: 0.4rem; }
+  .dz-formats {
+    font-size: 0.55rem;
+    letter-spacing: 0.25em;
+    color: var(--muted);
+    margin-top: 0.4rem;
+    text-transform: uppercase;
+  }
   #fileInput { display: none; }
-
+ 
+  /* --- Progress / error -------------------------------------------- */
   .progress {
     margin-top: 2rem;
     width: 200px; height: 1px;
@@ -137,12 +159,12 @@
     display: none;
   }
   .progress-text.visible { display: block; }
-
+ 
   #error {
     margin-top: 1.5rem;
     padding: 0.7rem 1.2rem;
-    border: 1px solid #ff5040;
-    color: #ff5040;
+    border: 1px solid var(--warn);
+    color: var(--warn);
     font-size: 0.65rem;
     letter-spacing: 0.18em;
     text-transform: uppercase;
@@ -151,7 +173,8 @@
     text-align: center;
   }
   #error.visible { display: block; }
-
+ 
+  /* --- Hint -------------------------------------------------------- */
   #hint {
     position: fixed;
     bottom: 2.5rem; left: 50%;
@@ -169,36 +192,8 @@
   }
   #hint.visible { opacity: 1; }
   #hint.fade { opacity: 0; }
-
-  #controls {
-    position: fixed;
-    bottom: 1.5rem; right: 1.5rem;
-    display: flex; gap: 0.5rem;
-    z-index: 10;
-    opacity: 0;
-    transition: opacity 0.8s ease;
-  }
-  #controls.visible { opacity: 1; }
-
-  .btn {
-    width: 42px; height: 42px;
-    border: 1px solid var(--line);
-    background: rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    color: var(--fg);
-    cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    transition: border-color 0.25s, background 0.25s;
-  }
-  .btn:hover {
-    border-color: var(--fg);
-    background: rgba(0, 0, 0, 0.75);
-  }
-  .btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.2; }
-  .btn.primary { border-color: var(--fg); }
-  .btn.primary:hover { background: rgba(255, 255, 255, 0.08); }
-
+ 
+  /* --- Brand ------------------------------------------------------- */
   #brand {
     position: fixed;
     top: 1.5rem; left: 1.75rem;
@@ -218,13 +213,121 @@
   #brand.visible { opacity: 0.85; }
   #brand .slash { font-weight: 400; }
   #brand .filename { color: var(--fg); text-transform: lowercase; }
-
-  /* When a file is being dragged, the whole window becomes a drop target
-     visually, even when the intro screen is hidden (i.e. a splat already loaded
-     and the user wants to load another one). */
+ 
+  /* --- Controls (bottom-right) ------------------------------------- */
+  #controls {
+    position: fixed;
+    bottom: 1.5rem; right: 1.5rem;
+    display: flex; gap: 0.5rem;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+  }
+  #controls.visible { opacity: 1; }
+ 
+  .btn {
+    width: 42px; height: 42px;
+    border: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: var(--fg);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.25s, background 0.25s;
+  }
+  .btn:hover {
+    border-color: var(--fg);
+    background: rgba(0, 0, 0, 0.75);
+  }
+  .btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.2; }
+  .btn.primary { border-color: var(--fg); }
+  .btn.primary:hover { background: rgba(255, 255, 255, 0.08); }
+ 
+  /* --- Tray (bottom-left, session library) ------------------------- */
+  #tray {
+    position: fixed;
+    bottom: 1.5rem; left: 1.5rem;
+    display: flex; flex-direction: column; gap: 0.4rem;
+    max-height: 50vh;
+    overflow-y: auto;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+    max-width: min(360px, calc(100vw - 12rem));
+  }
+  #tray.visible { opacity: 1; }
+  #tray::-webkit-scrollbar { width: 0; }
+ 
+  .tray-label {
+    font-size: 0.55rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0 0.2rem 0.3rem;
+  }
+ 
+  .tray-item {
+    display: flex; align-items: center;
+    gap: 0.6rem;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    min-width: 220px;
+  }
+  .tray-item:hover { border-color: rgba(255, 255, 255, 0.4); }
+  .tray-item.active { border-color: var(--fg); background: rgba(255, 255, 255, 0.04); }
+ 
+  .tray-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+    transition: background 0.2s;
+  }
+  .tray-item.active .tray-dot { background: var(--fg); }
+ 
+  .tray-info {
+    flex: 1;
+    min-width: 0;
+    display: flex; flex-direction: column;
+    gap: 0.15rem;
+  }
+  .tray-name {
+    font-size: 0.68rem;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-transform: lowercase;
+  }
+  .tray-meta {
+    font-size: 0.52rem;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+ 
+  .tray-close {
+    width: 18px; height: 18px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted);
+    opacity: 0;
+    transition: opacity 0.2s, color 0.2s;
+    flex-shrink: 0;
+  }
+  .tray-item:hover .tray-close { opacity: 1; }
+  .tray-close:hover { color: var(--warn); }
+  .tray-close svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 1.4; fill: none; }
+ 
+  /* --- Global drop overlay (after intro is hidden) ----------------- */
   body.dragging-file::after {
-    content: 'Relachez pour charger';
-    position: fixed; inset: 0;
+    content: 'Relachez pour ajouter au splat';
+    position: fixed; inset: 1rem;
     background: rgba(0, 0, 0, 0.85);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
@@ -235,9 +338,9 @@
     z-index: 500;
     pointer-events: none;
     border: 1px dashed var(--fg);
-    border-radius: 0;
   }
-
+ 
+  /* --- Toast ------------------------------------------------------- */
   #toast {
     position: fixed;
     top: 1.5rem; left: 50%;
@@ -255,634 +358,848 @@
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.4s ease, transform 0.4s ease;
+    max-width: calc(100vw - 3rem);
+    text-align: center;
   }
   #toast.visible { opacity: 1; transform: translate(-50%, 0); }
+  #toast.warn { border-color: var(--warn); color: var(--warn); }
 </style>
 </head>
 <body>
-
-<div id="stage"></div>
-
+ 
+<div id="stage">
+  <iframe id="viewer"
+          allow="fullscreen; xr-spatial-tracking; accelerometer; gyroscope; magnetometer; cross-origin-isolated"
+          allowfullscreen
+          referrerpolicy="no-referrer"
+          title="Splat viewer"></iframe>
+</div>
+ 
 <div id="brand">
   <span class="filename" id="brandFilename"></span><span class="slash">/</span>ai.oli
 </div>
-
+ 
 <div id="intro">
   <div class="mark"><span class="slash">/</span>ai.oli<span class="cursor"></span></div>
   <div class="sub">// Gaussian Splat Builder</div>
-
+ 
   <label id="dropzone" for="fileInput">
     <svg class="dz-icon" viewBox="0 0 24 24">
       <path d="M12 3v14M5 10l7-7 7 7M4 21h16"/>
     </svg>
-    <span class="dz-main">Glissez un fichier .ply</span>
+    <span class="dz-main">Glissez un export HTML</span>
     <span class="dz-or">ou <u>parcourir</u></span>
-    <span class="dz-formats">.ply &middot; .splat &middot; .ksplat</span>
-    <input type="file" id="fileInput" accept=".ply,.splat,.ksplat">
+    <span class="dz-formats">SuperSplat &middot; LichtFeld &middot; .html</span>
+    <input type="file" id="fileInput" accept=".html,.htm" multiple>
   </label>
-
+ 
   <div class="progress" id="progress"><div class="progress-bar" id="bar"></div></div>
   <div class="progress-text" id="ptext"></div>
   <div id="error"></div>
 </div>
-
-<div id="hint">Souris pour orbiter  -  Molette pour zoomer  -  Glissez un fichier pour changer</div>
-
+ 
+<div id="hint">Glissez d autres .html pour empiler  -  E pour exporter  -  Shift+E pour exporter sans filigrane</div>
+ 
 <div id="controls">
-  <button class="btn" id="resetBtn" title="Recentrer la vue (R)">
+  <button class="btn" id="refreshBtn" title="Recharger le viewer (R)">
     <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
   </button>
   <button class="btn" id="fsBtn" title="Plein ecran (F)">
     <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
   </button>
-  <button class="btn primary" id="exportBtn" title="Exporter en HTML autonome (E)">
+  <button class="btn primary" id="exportBtn" title="Exporter (E) - Shift+E sans filigrane">
     <svg viewBox="0 0 24 24"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"/></svg>
   </button>
 </div>
-
+ 
+<div id="tray"></div>
+ 
 <div id="toast"></div>
-
-<!-- ===========================================================================
-  EMBEDDED CLIENT VIEWER TEMPLATE
-  This is the self-contained HTML written out at export time. It contains the
-  splat as base64, has no drop zone, no export button. Only view + reset + fs.
-  Placeholders: __TITLE__, __FILENAME_NOEXT__, __FORMAT__, __CAM_POS__,
-                __CAM_TARGET__, __CAM_UP__, __B64__
-  =========================================================================== -->
-<script type="text/template" id="viewer-template"><!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>__TITLE__</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@200;300;400;500&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --bg: #000000; --fg: #ffffff;
-    --muted: rgba(255, 255, 255, 0.5);
-    --line: rgba(255, 255, 255, 0.14);
-    --accent: #ffffff;
+ 
+<script>
+  'use strict';
+ 
+  // ---- DOM refs ----------------------------------------------------
+  const intro         = document.getElementById('intro');
+  const dropzone      = document.getElementById('dropzone');
+  const fileInput     = document.getElementById('fileInput');
+  const progressEl    = document.getElementById('progress');
+  const bar           = document.getElementById('bar');
+  const ptext         = document.getElementById('ptext');
+  const errorEl       = document.getElementById('error');
+  const hint          = document.getElementById('hint');
+  const controls      = document.getElementById('controls');
+  const brand         = document.getElementById('brand');
+  const brandFilename = document.getElementById('brandFilename');
+  const refreshBtn    = document.getElementById('refreshBtn');
+  const fsBtn         = document.getElementById('fsBtn');
+  const exportBtn     = document.getElementById('exportBtn');
+  const toast         = document.getElementById('toast');
+  const trayEl        = document.getElementById('tray');
+  const viewer        = document.getElementById('viewer');
+ 
+  // ---- State -------------------------------------------------------
+  /**
+   * Each splat: { id, name, file (File), blobUrl (string|null), size, addedAt }
+   * We keep the File object (not the text content) for memory efficiency.
+   * blobUrl is created on demand for the active splat and revoked on switch.
+   */
+  const splats = [];
+  let activeId = null;
+  let nextId = 1;
+ 
+  const MAX_BYTES = 800 * 1024 * 1024; // 800 MB soft cap (browser will choke beyond)
+  const VALIDATION_HEAD_BYTES = 256 * 1024; // first 256 KB scanned for keywords
+ 
+  const SPLAT_KEYWORDS = [
+    'supersplat', 'lichtfeld', 'gaussian splat', 'gaussiansplat',
+    'gaussian-splat', 'gaussian_splat', '@mkkellogg', 'playcanvas',
+    '.splat', '.ply', 'gsplat', 'sh_coeffs', 'spherical-harmonics'
+  ];
+ 
+  // ---- Utility -----------------------------------------------------
+  function setProgress(p, l) {
+    progressEl.classList.add('visible');
+    ptext.classList.add('visible');
+    bar.style.transform = `scaleX(${p})`;
+    if (l !== undefined) ptext.textContent = l;
   }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body {
-    width: 100%; height: 100%; overflow: hidden;
-    background: var(--bg); color: var(--fg);
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    -webkit-font-smoothing: antialiased;
-    user-select: none; -webkit-user-select: none;
-    touch-action: none;
+  function clearProgress() {
+    progressEl.classList.remove('visible');
+    ptext.classList.remove('visible');
   }
-  #stage { position: fixed; inset: 0; cursor: grab; }
-  #stage.dragging { cursor: grabbing; }
-  #stage canvas { display: block; }
-
-  #intro {
-    position: fixed; inset: 0;
-    background: var(--bg);
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    z-index: 20;
-    transition: opacity 1.2s ease, visibility 1.2s ease;
+  function showError(msg) {
+    errorEl.textContent = msg;
+    errorEl.classList.add('visible');
+    clearProgress();
   }
-  #intro.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
-
-  .mark {
-    font-weight: 300;
-    font-size: clamp(2.2rem, 6vw, 4.2rem);
-    letter-spacing: -0.02em; line-height: 1;
-    display: inline-flex; align-items: baseline;
+  function clearError() {
+    errorEl.classList.remove('visible');
   }
-  .mark .slash { font-weight: 400; }
-  .mark .cursor {
-    display: inline-block;
-    width: 0.55em; height: 1em;
-    margin-left: 0.2em;
-    background: var(--accent);
-    transform: translateY(0.12em);
-    animation: blink 1.05s steps(1, end) infinite;
+ 
+  function showToast(msg, opts = {}) {
+    toast.textContent = msg;
+    toast.classList.toggle('warn', !!opts.warn);
+    toast.classList.add('visible');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => toast.classList.remove('visible'), opts.long ? 3600 : 2400);
   }
-  @keyframes blink { 50% { opacity: 0; } }
-
-  .sub {
-    margin-top: 1.5rem;
-    font-size: 0.7rem; letter-spacing: 0.15em;
-    color: var(--muted); font-weight: 300;
+ 
+  function stripExt(n) { return (n || '').replace(/\.[^.]+$/, ''); }
+  function sanitize(n) {
+    return (n || 'splat')
+      .replace(/\.[^.]+$/, '')
+      .replace(/[^\w\-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80) || 'splat';
   }
-
-  .progress {
-    margin-top: 3rem;
-    width: 200px; height: 1px;
-    background: var(--line);
-    overflow: hidden; position: relative;
+  function formatBytes(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+    if (b < 1024 * 1024 * 1024) return (b / (1024 * 1024)).toFixed(1) + ' MB';
+    return (b / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
   }
-  .progress-bar {
-    position: absolute; inset: 0;
-    background: var(--fg);
-    transform-origin: left;
-    transform: scaleX(0);
-    transition: transform 0.4s ease;
+ 
+  let hintFaded = false;
+  function fadeHint() {
+    if (hintFaded) return;
+    hintFaded = true;
+    hint.classList.add('fade');
   }
-  .progress-text {
-    margin-top: 0.8rem;
-    font-size: 0.65rem; letter-spacing: 0.25em;
-    color: var(--muted); height: 1em;
-    text-transform: uppercase;
+ 
+  function reveal() {
+    setTimeout(() => {
+      intro.classList.add('hidden');
+      controls.classList.add('visible');
+      brand.classList.add('visible');
+      trayEl.classList.add('visible');
+      if (!hint.classList.contains('visible')) {
+        hint.classList.add('visible');
+        setTimeout(fadeHint, 6500);
+      }
+    }, 250);
   }
-
-  #hint {
-    position: fixed;
-    bottom: 2.5rem; left: 50%; transform: translateX(-50%);
-    font-size: 0.65rem; letter-spacing: 0.3em;
-    text-transform: uppercase; color: var(--muted);
-    z-index: 10; opacity: 0;
-    transition: opacity 0.8s ease;
-    pointer-events: none; text-align: center; white-space: nowrap;
-  }
-  #hint.visible { opacity: 1; }
-  #hint.fade { opacity: 0; }
-
-  #controls {
-    position: fixed;
-    bottom: 1.5rem; right: 1.5rem;
-    display: flex; gap: 0.5rem;
-    z-index: 10; opacity: 0;
-    transition: opacity 0.8s ease;
-  }
-  #controls.visible { opacity: 1; }
-
-  .btn {
-    width: 42px; height: 42px;
-    border: 1px solid var(--line);
-    background: rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    color: var(--fg); cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    transition: border-color 0.25s, background 0.25s;
-  }
-  .btn:hover { border-color: var(--accent); background: rgba(0, 0, 0, 0.75); }
-  .btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.2; }
-
-  #brand {
-    position: fixed;
-    top: 1.5rem; left: 1.75rem;
-    font-weight: 300; font-size: 0.78rem;
-    color: var(--fg); z-index: 10; opacity: 0;
-    transition: opacity 0.8s ease;
-    pointer-events: none;
-    max-width: calc(100vw - 3rem);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  #brand.visible { opacity: 0.85; }
-  #brand .slash { font-weight: 400; }
-  #brand .filename { color: var(--fg); text-transform: lowercase; }
-</style>
-</head>
-<body>
-
-<div id="stage"></div>
-
-<div id="brand">
-  <span class="filename">__FILENAME_NOEXT__</span><span class="slash">/</span>ai.oli
-</div>
-
-<div id="intro">
-  <div class="mark"><span class="slash">/</span>ai.oli<span class="cursor"></span></div>
-  <div class="sub">// Gaussian Splat Preview</div>
-  <div class="progress"><div class="progress-bar" id="bar"></div></div>
-  <div class="progress-text" id="ptext">Initialisation</div>
-</div>
-
-<div id="hint">Souris pour orbiter  -  Molette pour zoomer</div>
-
-<div id="controls">
-  <button class="btn" id="resetBtn" title="Recentrer la vue (R)">
-    <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
-  </button>
-  <button class="btn" id="fsBtn" title="Plein ecran (F)">
-    <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
-  </button>
-</div>
-
-<!-- Splat data embedded as base64. Decoded into a Blob URL at runtime. -->
-<script id="splat-data" type="text/plain">__B64__<\/script>
-
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.6/build/gaussian-splats-3d.module.min.js"
-  }
-}
-<\/script>
-
-<script type="module">
-import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
-
-const stage=document.getElementById('stage');
-const intro=document.getElementById('intro');
-const bar=document.getElementById('bar');
-const ptext=document.getElementById('ptext');
-const hint=document.getElementById('hint');
-const controls=document.getElementById('controls');
-const brand=document.getElementById('brand');
-const resetBtn=document.getElementById('resetBtn');
-const fsBtn=document.getElementById('fsBtn');
-
-function setProgress(p,l){bar.style.transform=`scaleX(${p})`;if(l!==undefined)ptext.textContent=l;}
-let hintFaded=false;function fadeHint(){if(hintFaded)return;hintFaded=true;hint.classList.add('fade');}
-function reveal(){setTimeout(()=>{intro.classList.add('hidden');controls.classList.add('visible');brand.classList.add('visible');hint.classList.add('visible');setTimeout(fadeHint,4500);},350);}
-
-// Initial camera state captured at builder time
-const INITIAL_CAM_POS    = __CAM_POS__;
-const INITIAL_CAM_TARGET = __CAM_TARGET__;
-const INITIAL_CAM_UP     = __CAM_UP__;
-
-let viewer = null;
-
-function resetView() {
-  if (!viewer) return;
-  viewer.camera.position.set(...INITIAL_CAM_POS);
-  if (viewer.controls && viewer.controls.target) {
-    viewer.controls.target.set(...INITIAL_CAM_TARGET);
-    viewer.controls.update();
-  }
-}
-resetBtn.addEventListener('click', resetView);
-
-function toggleFs() {
-  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
-  else document.exitFullscreen?.();
-}
-fsBtn.addEventListener('click', toggleFs);
-
-addEventListener('keydown', (e) => {
-  if (e.key === 'r' || e.key === 'R') resetView();
-  if (e.key === 'f' || e.key === 'F') toggleFs();
-});
-
-stage.addEventListener('pointerdown', () => stage.classList.add('dragging'));
-addEventListener('pointerup', () => stage.classList.remove('dragging'));
-stage.addEventListener('pointermove', fadeHint, { passive: true });
-stage.addEventListener('wheel', fadeHint, { passive: true });
-
-async function init() {
-  try {
-    setProgress(0.15, 'Decodage');
-    const b64Node = document.getElementById('splat-data');
-    const b64 = b64Node.textContent.trim();
-    b64Node.remove(); // free DOM memory after decode
-
-    // Decode base64 in chunks to avoid hangs on large files
-    setProgress(0.35, 'Decompression');
-    const binary = atob(b64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const blob = new Blob([bytes], { type: 'application/octet-stream' });
-    const url = URL.createObjectURL(blob);
-
-    setProgress(0.6, 'Construction');
-    viewer = new GaussianSplats3D.Viewer({
-      rootElement: stage,
-      cameraUp: INITIAL_CAM_UP,
-      initialCameraPosition: INITIAL_CAM_POS,
-      initialCameraLookAt: INITIAL_CAM_TARGET,
-      sharedMemoryForWorkers: false,
-      gpuAcceleratedSort: true,
-      antialiased: true,
-      sphericalHarmonicsDegree: 3,
-    });
-
-    await viewer.addSplatScene(url, {
-      format: __FORMAT__,
-      showLoadingUI: false,
-      progressiveLoad: false,
-    });
-
-    viewer.start();
-    setProgress(1, 'Pret');
-    reveal();
-  } catch (err) {
-    console.error(err);
-    setProgress(0, 'Erreur: ' + (err.message || err));
-  }
-}
-
-init();
-<\/script>
-</body>
-</html></script>
-
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.6/build/gaussian-splats-3d.module.min.js"
-  }
-}
-</script>
-
-<script type="module">
-import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
-
-// DOM refs
-const stage         = document.getElementById('stage');
-const intro         = document.getElementById('intro');
-const dropzone      = document.getElementById('dropzone');
-const fileInput     = document.getElementById('fileInput');
-const progressEl    = document.getElementById('progress');
-const bar           = document.getElementById('bar');
-const ptext         = document.getElementById('ptext');
-const errorEl       = document.getElementById('error');
-const hint          = document.getElementById('hint');
-const controls      = document.getElementById('controls');
-const brand         = document.getElementById('brand');
-const brandFilename = document.getElementById('brandFilename');
-const resetBtn      = document.getElementById('resetBtn');
-const fsBtn         = document.getElementById('fsBtn');
-const exportBtn     = document.getElementById('exportBtn');
-const toast         = document.getElementById('toast');
-
-let viewer       = null;
-let currentBase64 = null;
-let currentName   = null;
-let currentFormat = 2; // 0=splat, 1=ksplat, 2=ply
-let currentBlobUrl = null;
-let initialCamPos    = [3, -3, 3];
-let initialCamTarget = [0, 0, 0];
-let initialCamUp     = [0, -1, 0]; // Y-down world (COLMAP/LichtFeld convention)
-
-const FORMAT_MAP = { 'splat': 0, 'ksplat': 1, 'ply': 2 };
-
-function setProgress(p, l) {
-  progressEl.classList.add('visible');
-  ptext.classList.add('visible');
-  bar.style.transform = `scaleX(${p})`;
-  if (l !== undefined) ptext.textContent = l;
-}
-
-function showError(msg) {
-  errorEl.textContent = msg;
-  errorEl.classList.add('visible');
-  progressEl.classList.remove('visible');
-  ptext.classList.remove('visible');
-}
-
-function clearError() {
-  errorEl.classList.remove('visible');
-}
-
-let hintFaded = false;
-function fadeHint() {
-  if (hintFaded) return;
-  hintFaded = true;
-  hint.classList.add('fade');
-}
-
-function reveal() {
-  setTimeout(() => {
-    intro.classList.add('hidden');
-    controls.classList.add('visible');
-    brand.classList.add('visible');
-    if (!hint.classList.contains('visible')) {
-      hint.classList.add('visible');
-      setTimeout(fadeHint, 5500);
+ 
+  // ---- Validation --------------------------------------------------
+  async function validateSplatHtml(file) {
+    const ext = file.name.toLowerCase().split('.').pop();
+    if (ext !== 'html' && ext !== 'htm') {
+      return { ok: false, reason: `Format non supporte (.${ext})` };
     }
-  }, 350);
-}
-
-function resetView() {
-  if (!viewer) return;
-  viewer.camera.position.set(...initialCamPos);
-  if (viewer.controls && viewer.controls.target) {
-    viewer.controls.target.set(...initialCamTarget);
-    viewer.controls.update();
-  }
-}
-resetBtn.addEventListener('click', resetView);
-
-function toggleFs() {
-  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
-  else document.exitFullscreen?.();
-}
-fsBtn.addEventListener('click', toggleFs);
-
-addEventListener('keydown', (e) => {
-  if (intro.classList.contains('hidden')) {
-    if (e.key === 'r' || e.key === 'R') resetView();
-    if (e.key === 'f' || e.key === 'F') toggleFs();
-    if (e.key === 'e' || e.key === 'E') exportHtml();
-  }
-});
-
-stage.addEventListener('pointerdown', () => stage.classList.add('dragging'));
-addEventListener('pointerup',   () => stage.classList.remove('dragging'));
-stage.addEventListener('pointermove', fadeHint, { passive: true });
-stage.addEventListener('wheel',       fadeHint, { passive: true });
-
-function stripExt(n)  { return (n || '').replace(/\.[^.]+$/, ''); }
-function sanitize(n)  {
-  return (n || 'splat')
-    .replace(/\.[^.]+$/, '')
-    .replace(/[^\w\-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80) || 'splat';
-}
-
-function formatBytes(b) {
-  if (b < 1024) return b + ' B';
-  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
-  if (b < 1024*1024*1024) return (b/(1024*1024)).toFixed(1) + ' MB';
-  return (b/(1024*1024*1024)).toFixed(2) + ' GB';
-}
-
-async function loadFile(file) {
-  clearError();
-
-  const ext = file.name.toLowerCase().split('.').pop();
-  if (!(ext in FORMAT_MAP)) {
-    showError(`Format non supporte (.${ext})`);
-    return;
-  }
-
-  // Soft warning above 800 MB (likely to crash the browser at export time)
-  if (file.size > 800 * 1024 * 1024) {
-    showError(`Fichier trop volumineux : ${formatBytes(file.size)} - max ~800 MB`);
-    return;
-  }
-
-  setProgress(0.1, 'Lecture');
-
-  try {
-    // Use FileReader for fast base64 conversion
-    const dataUrl = await new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = (e) => resolve(e.target.result);
-      r.onerror = () => reject(new Error('lecture impossible'));
-      r.readAsDataURL(file);
-    });
-
-    const comma = dataUrl.indexOf(',');
-    currentBase64 = dataUrl.slice(comma + 1);
-    currentName   = file.name;
-    currentFormat = FORMAT_MAP[ext];
-
-    setProgress(0.3, 'Decodage');
-
-    // Build blob URL for mkkellogg
-    if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
-    const arrayBuffer = await file.arrayBuffer();
-    const blob = new Blob([arrayBuffer]);
-    currentBlobUrl = URL.createObjectURL(blob);
-
-    // Dispose previous viewer if any
-    if (viewer) {
-      try { viewer.dispose(); } catch (e) {}
-      viewer = null;
-      // Remove any leftover canvas
-      stage.innerHTML = '';
+    if (file.size > MAX_BYTES) {
+      return { ok: false, reason: `Fichier trop volumineux : ${formatBytes(file.size)} - max ~800 MB` };
     }
-
-    setProgress(0.55, 'Construction');
-
-    viewer = new GaussianSplats3D.Viewer({
-      rootElement: stage,
-      cameraUp: initialCamUp,
-      initialCameraPosition: initialCamPos,
-      initialCameraLookAt: initialCamTarget,
-      sharedMemoryForWorkers: false,
-      gpuAcceleratedSort: true,
-      antialiased: true,
-      sphericalHarmonicsDegree: 3,
+    if (file.size < 4 * 1024) {
+      return { ok: false, reason: 'Fichier trop petit pour etre un viewer splat' };
+    }
+ 
+    // Read first chunk for content sniffing
+    let head;
+    try {
+      head = await file.slice(0, VALIDATION_HEAD_BYTES).text();
+    } catch (e) {
+      return { ok: false, reason: 'Lecture du fichier impossible' };
+    }
+ 
+    const lower = head.toLowerCase();
+    if (!/<!doctype\s+html|<html[\s>]/i.test(head)) {
+      return { ok: false, reason: 'Le fichier n est pas un document HTML' };
+    }
+ 
+    const matched = SPLAT_KEYWORDS.find(k => lower.includes(k));
+    if (!matched) {
+      return {
+        ok: false,
+        reason: 'Aucun marqueur de splat detecte (SuperSplat / LichtFeld / Gaussian)'
+      };
+    }
+ 
+    // Bonus: detect source for the UI badge
+    let source = 'splat';
+    if (lower.includes('supersplat'))      source = 'SuperSplat';
+    else if (lower.includes('lichtfeld'))  source = 'LichtFeld';
+    else if (lower.includes('playcanvas')) source = 'PlayCanvas';
+    else if (lower.includes('@mkkellogg')) source = 'mkkellogg';
+ 
+    return { ok: true, source, keyword: matched };
+  }
+ 
+  // ---- Splat lifecycle --------------------------------------------
+  function addSplat(file, source) {
+    const id = nextId++;
+    const splat = {
+      id,
+      name: file.name,
+      file,
+      blobUrl: null,
+      size: file.size,
+      source: source || 'splat',
+      addedAt: Date.now()
+    };
+    splats.push(splat);
+    return splat;
+  }
+ 
+  /**
+   * Activates a splat. Returns a Promise that resolves when the splat's
+   * own <canvas> is detected inside the iframe AND has a non-zero size
+   * (i.e. the embedded viewer has actually started rendering).
+   *
+   * This is what guarantees the /ai.oli intro overlay stays visible long
+   * enough for SuperSplat/LichtFeld to finish init (workers, GPU sort,
+   * decode). Otherwise we hide the overlay too early and the user sees
+   * the iframe still in its black init state.
+   *
+   * Hard timeout: 12s. After that we resolve anyway so the UI never
+   * locks up on a broken/exotic export.
+   */
+  function activateSplat(id) {
+    const splat = splats.find(s => s.id === id);
+    if (!splat) return Promise.resolve();
+ 
+    if (!splat.blobUrl) {
+      splat.blobUrl = URL.createObjectURL(splat.file);
+    }
+ 
+    // Revoke the previously active blob URL (after a delay so the iframe
+    // has time to finish unloading the old src cleanly)
+    const prev = splats.find(s => s.id === activeId && s.id !== id);
+    if (prev && prev.blobUrl) {
+      const oldUrl = prev.blobUrl;
+      prev.blobUrl = null;
+      setTimeout(() => URL.revokeObjectURL(oldUrl), 1500);
+    }
+ 
+    activeId = id;
+    brandFilename.textContent = stripExt(splat.name);
+    renderTray();
+ 
+    viewer.src = splat.blobUrl;
+ 
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearInterval(poll);
+        clearTimeout(hardTimeout);
+        resolve();
+      };
+ 
+      // Poll the iframe's document for a canvas with paintable dimensions.
+      // Blob URLs are same-origin with the parent here, so contentDocument
+      // is accessible. If for some reason it isn't (CSP, future browser
+      // changes), the try/catch keeps us moving.
+      let attempts = 0;
+      const poll = setInterval(() => {
+        attempts++;
+        try {
+          const doc = viewer.contentDocument;
+          if (doc) {
+            const canvas = doc.querySelector('canvas');
+            if (canvas && canvas.width > 0 && canvas.height > 0) {
+              // Canvas exists and has size. Give the viewer 600ms more
+              // to actually paint the first frame before we fade out.
+              setTimeout(finish, 600);
+              clearInterval(poll);
+            }
+          }
+        } catch (e) { /* cross-origin or not ready - keep polling */ }
+ 
+        if (attempts > 120) { // 120 * 100ms = 12s
+          finish();
+        }
+      }, 100);
+ 
+      // Hard safety net: never wait more than 12s
+      const hardTimeout = setTimeout(finish, 12000);
     });
-
-    setProgress(0.75, 'Splat');
-    await viewer.addSplatScene(currentBlobUrl, {
-      format: currentFormat,
-      showLoadingUI: false,
-      progressiveLoad: false,
+  }
+ 
+  function removeSplat(id) {
+    const idx = splats.findIndex(s => s.id === id);
+    if (idx < 0) return;
+    const s = splats[idx];
+    if (s.blobUrl) {
+      const oldUrl = s.blobUrl;
+      setTimeout(() => URL.revokeObjectURL(oldUrl), 500);
+    }
+    splats.splice(idx, 1);
+ 
+    if (activeId === id) {
+      if (splats.length > 0) {
+        // Activate neighbour
+        const next = splats[Math.min(idx, splats.length - 1)];
+        activateSplat(next.id);
+      } else {
+        // Back to intro
+        activeId = null;
+        viewer.src = 'about:blank';
+        intro.classList.remove('hidden');
+        controls.classList.remove('visible');
+        brand.classList.remove('visible');
+        trayEl.classList.remove('visible');
+        brandFilename.textContent = '';
+        clearError();
+        clearProgress();
+      }
+    }
+    renderTray();
+  }
+ 
+  function renderTray() {
+    trayEl.innerHTML = '';
+    if (splats.length === 0) return;
+ 
+    const label = document.createElement('div');
+    label.className = 'tray-label';
+    label.textContent = `// session (${splats.length})`;
+    trayEl.appendChild(label);
+ 
+    splats.forEach(s => {
+      const item = document.createElement('div');
+      item.className = 'tray-item' + (s.id === activeId ? ' active' : '');
+      item.title = `${s.name} - ${formatBytes(s.size)} - ${s.source}`;
+ 
+      const dot = document.createElement('span');
+      dot.className = 'tray-dot';
+ 
+      const info = document.createElement('div');
+      info.className = 'tray-info';
+      const name = document.createElement('span');
+      name.className = 'tray-name';
+      name.textContent = s.name;
+      const meta = document.createElement('span');
+      meta.className = 'tray-meta';
+      meta.textContent = `${s.source} - ${formatBytes(s.size)}`;
+      info.appendChild(name);
+      info.appendChild(meta);
+ 
+      const close = document.createElement('span');
+      close.className = 'tray-close';
+      close.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6l-12 12"/></svg>';
+      close.title = 'Retirer';
+      close.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeSplat(s.id);
+      });
+ 
+      item.appendChild(dot);
+      item.appendChild(info);
+      item.appendChild(close);
+      item.addEventListener('click', () => {
+        if (s.id !== activeId) activateSplat(s.id);
+      });
+      trayEl.appendChild(item);
     });
-
-    viewer.start();
+  }
+ 
+  // ---- File loading -----------------------------------------------
+  async function loadFile(file) {
+    clearError();
+    setProgress(0.1, 'Lecture');
+ 
+    const v = await validateSplatHtml(file);
+    if (!v.ok) {
+      showError(v.reason);
+      // If intro is already hidden (a splat is loaded), surface the error as a toast
+      if (intro.classList.contains('hidden')) {
+        showToast(v.reason, { warn: true, long: true });
+        clearError();
+      }
+      return;
+    }
+ 
+    setProgress(0.55, 'Preparation');
+    const splat = addSplat(file, v.source);
+ 
+    // Wait for the iframe's splat canvas to actually start rendering
+    // before tearing down the intro overlay. Without this, intro hides
+    // immediately and the user stares at SuperSplat's black init state.
+    setProgress(0.75, 'Decodage');
+    const activation = activateSplat(splat.id);
+    setTimeout(() => setProgress(0.92, 'Rendu'), 800);
+    await activation;
+ 
     setProgress(1, 'Pret');
-
-    brandFilename.textContent = stripExt(file.name);
-    reveal();
-  } catch (err) {
-    console.error(err);
-    showError(err.message || 'Erreur de chargement');
+    setTimeout(clearProgress, 400);
+ 
+    if (!intro.classList.contains('hidden')) {
+      reveal();
+    } else {
+      showToast(`+ ${splat.name}`);
+    }
   }
-}
-
-// Drag & drop -- attached aggressively to window/document.
-// (Note: the head script already blocks the default browser behavior at the
-//  window level. Here we only handle the visual feedback + actual loading.)
-let dragCount = 0;
-function onDragStart() {
-  dragCount++;
-  if (intro.classList.contains('hidden')) {
-    document.body.classList.add('dragging-file');
-  } else {
-    dropzone.classList.add('over');
+ 
+  async function loadFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    // Load sequentially so the progress UI makes sense
+    for (const f of files) {
+      // eslint-disable-next-line no-await-in-loop
+      await loadFile(f);
+    }
   }
-}
-function onDragEnd() {
-  dragCount = Math.max(0, dragCount - 1);
-  if (dragCount === 0) {
+ 
+  // ---- Drag & drop -------------------------------------------------
+  let dragCount = 0;
+  function onDragStart() {
+    dragCount++;
+    if (intro.classList.contains('hidden')) {
+      document.body.classList.add('dragging-file');
+    } else {
+      dropzone.classList.add('over');
+    }
+  }
+  function onDragEnd() {
+    dragCount = Math.max(0, dragCount - 1);
+    if (dragCount === 0) {
+      document.body.classList.remove('dragging-file');
+      dropzone.classList.remove('over');
+    }
+  }
+  window.addEventListener('dragenter', (e) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    onDragStart();
+  });
+  window.addEventListener('dragleave', (e) => {
+    if (e.target === document || e.target === document.body || e.relatedTarget === null) {
+      onDragEnd();
+    } else {
+      dragCount = Math.max(0, dragCount - 1);
+      if (dragCount === 0) onDragEnd();
+    }
+  });
+  window.addEventListener('drop', (e) => {
+    dragCount = 0;
     document.body.classList.remove('dragging-file');
     dropzone.classList.remove('over');
+    const files = e.dataTransfer?.files;
+    if (files && files.length) loadFiles(files);
+  });
+ 
+  fileInput.addEventListener('change', (e) => {
+    loadFiles(e.target.files);
+    fileInput.value = ''; // allow re-selecting same file
+  });
+ 
+  // ---- Controls ----------------------------------------------------
+  function refreshViewer() {
+    if (!activeId) return;
+    const splat = splats.find(s => s.id === activeId);
+    if (!splat || !splat.blobUrl) return;
+    // Force iframe reload by bouncing through about:blank
+    const url = splat.blobUrl;
+    viewer.src = 'about:blank';
+    setTimeout(() => { viewer.src = url; }, 50);
   }
-}
-window.addEventListener('dragenter', (e) => {
-  if (!e.dataTransfer?.types?.includes('Files')) return;
-  onDragStart();
-});
-window.addEventListener('dragleave', (e) => {
-  // dragleave fires on every child, so we use a counter
-  if (e.target === document || e.target === document.body || e.relatedTarget === null) {
-    onDragEnd();
-  } else {
-    dragCount = Math.max(0, dragCount - 1);
-    if (dragCount === 0) onDragEnd();
+  refreshBtn.addEventListener('click', refreshViewer);
+ 
+  function toggleFs() {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+    else document.exitFullscreen?.();
   }
-});
-window.addEventListener('drop', (e) => {
-  dragCount = 0;
-  document.body.classList.remove('dragging-file');
-  dropzone.classList.remove('over');
-  const f = e.dataTransfer?.files?.[0];
-  if (f) loadFile(f);
-});
-
-fileInput.addEventListener('change', (e) => {
-  const f = e.target.files?.[0];
-  if (f) loadFile(f);
-});
-
-function showToast(msg) {
-  toast.textContent = msg;
-  toast.classList.add('visible');
-  clearTimeout(showToast._t);
-  showToast._t = setTimeout(() => toast.classList.remove('visible'), 2400);
-}
-
-function captureCurrentCamera() {
-  if (!viewer || !viewer.camera) return;
-  const p = viewer.camera.position;
-  initialCamPos = [p.x, p.y, p.z];
-  if (viewer.controls && viewer.controls.target) {
-    const t = viewer.controls.target;
-    initialCamTarget = [t.x, t.y, t.z];
+  fsBtn.addEventListener('click', toggleFs);
+ 
+  // ---- Export ------------------------------------------------------
+  /**
+   * Inject a small "/ai.oli" watermark + curation comment into the splat
+   * HTML before downloading. The watermark is positioned bottom-right with
+   * a very high z-index so it sits above the splat viewer's own UI.
+   * Pass { brand: false } to download the original file untouched.
+   */
+  async function exportCurrent(opts = {}) {
+    if (!activeId) {
+      showToast('Charge un splat d abord', { warn: true });
+      return;
+    }
+    const splat = splats.find(s => s.id === activeId);
+    if (!splat) return;
+ 
+    const brandIt = opts.brand !== false;
+ 
+    showToast(brandIt ? 'Generation...' : 'Export raw...');
+ 
+    try {
+      let blob;
+      let baseName = sanitize(splat.name);
+ 
+      if (!brandIt) {
+        // Pass-through: download the original File untouched
+        blob = splat.file;
+      } else {
+        // Read full content as text and inject brand
+        const text = await splat.file.text();
+        const branded = injectBrand(text, splat);
+        blob = new Blob([branded], { type: 'text/html' });
+      }
+ 
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = baseName + (brandIt ? '.ai-oli.html' : '.html');
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+ 
+      const sizeNote = formatBytes(blob.size);
+      const tag = brandIt ? 'Export OK' : 'Export raw OK';
+      setTimeout(() => showToast(`${tag} - ${sizeNote}`, { long: true }), 80);
+    } catch (err) {
+      console.error(err);
+      showToast('Erreur a l export', { warn: true, long: true });
+    }
   }
-  // cameraUp stays default unless we changed it
-}
-
-function exportHtml() {
-  if (!currentBase64) {
-    showToast('Charge un fichier d abord');
-    return;
+ 
+  /**
+   * Injects /ai.oli branding into the host splat HTML at export time.
+   *
+   *   1. Header comment under the doctype (curation provenance).
+   *   2. <title> rewritten to "<filename> /ai.oli" (mirrors the panorama
+   *      builder's __TITLE__ pattern).
+   *   3. <head> gets the JetBrains Mono font link (so the brand renders
+   *      with the right typography even on hosts that don't import it).
+   *   4. Right before </body>: the brand block, structurally identical
+   *      to the panorama exported viewer (top-left, filename + link to
+   *      aiolicollective.com, hover -> font-weight 700). Wrapped in
+   *      aioli-* classes + !important everywhere so host CSS can't fight
+   *      it, with a very high z-index so it sits above the host UI.
+   *
+   * Pass { brand: false } in exportCurrent() to skip all of this and
+   * download the original File untouched.
+   */
+  function injectBrand(html, splat) {
+    const isoDate = new Date().toISOString().slice(0, 10);
+    const noExt = stripExt(splat.name);
+ 
+    const headerComment =
+      `<!--\n` +
+      `  Curated by /ai.oli - https://aiolicollective.com\n` +
+      `  Source: ${escapeHtml(splat.source)} export\n` +
+      `  File: ${escapeHtml(splat.name)}\n` +
+      `  Date: ${isoDate}\n` +
+      `-->\n`;
+ 
+    // Font + brand + loading-overlay styles, injected once into <head>.
+    // The overlay mirrors the panorama exported viewer's intro: black
+    // full-screen, /ai.oli mark with blinking cursor, sub, 1px progress
+    // bar, then fades out (visibility + opacity) when the splat is ready.
+    const fontLinks =
+      `<link rel="preconnect" href="https://fonts.googleapis.com">\n` +
+      `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n` +
+      `<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@200;300;400;500&display=swap" rel="stylesheet">\n` +
+      `<style id="aioli-style">\n` +
+      `  #aioli-brand {\n` +
+      `    position: fixed !important;\n` +
+      `    top: 1.5rem !important;\n` +
+      `    left: 1.75rem !important;\n` +
+      `    z-index: 2147483646 !important;\n` +
+      `    font-family: 'JetBrains Mono', ui-monospace, monospace !important;\n` +
+      `    font-weight: 300 !important;\n` +
+      `    font-size: 0.78rem !important;\n` +
+      `    line-height: 1 !important;\n` +
+      `    letter-spacing: 0 !important;\n` +
+      `    color: #ffffff !important;\n` +
+      `    opacity: 0.85 !important;\n` +
+      `    pointer-events: none !important;\n` +
+      `    max-width: calc(100vw - 3rem) !important;\n` +
+      `    overflow: hidden !important;\n` +
+      `    text-overflow: ellipsis !important;\n` +
+      `    white-space: nowrap !important;\n` +
+      `    text-shadow: 0 0 6px rgba(0,0,0,0.75), 0 0 2px rgba(0,0,0,0.95) !important;\n` +
+      `    user-select: none !important;\n` +
+      `    margin: 0 !important;\n` +
+      `    padding: 0 !important;\n` +
+      `  }\n` +
+      `  #aioli-brand .aioli-filename {\n` +
+      `    color: #ffffff !important;\n` +
+      `    text-transform: lowercase !important;\n` +
+      `  }\n` +
+      `  #aioli-brand .aioli-slash { font-weight: 400 !important; }\n` +
+      `  #aioli-brand .aioli-link {\n` +
+      `    color: inherit !important;\n` +
+      `    text-decoration: none !important;\n` +
+      `    pointer-events: auto !important;\n` +
+      `    cursor: pointer !important;\n` +
+      `    transition: font-weight 0.15s ease !important;\n` +
+      `  }\n` +
+      `  #aioli-brand .aioli-link:hover,\n` +
+      `  #aioli-brand .aioli-link:focus-visible {\n` +
+      `    font-weight: 700 !important;\n` +
+      `    outline: none !important;\n` +
+      `  }\n` +
+      `  /* Loading overlay (mirrors panorama viewer intro) */\n` +
+      `  #aioli-intro {\n` +
+      `    position: fixed !important;\n` +
+      `    inset: 0 !important;\n` +
+      `    background: #000 !important;\n` +
+      `    display: flex !important;\n` +
+      `    flex-direction: column !important;\n` +
+      `    align-items: center !important;\n` +
+      `    justify-content: center !important;\n` +
+      `    z-index: 2147483647 !important;\n` +
+      `    font-family: 'JetBrains Mono', ui-monospace, monospace !important;\n` +
+      `    color: #ffffff !important;\n` +
+      `    opacity: 1 !important;\n` +
+      `    visibility: visible !important;\n` +
+      `    transition: opacity 1.2s ease, visibility 1.2s ease !important;\n` +
+      `    pointer-events: all !important;\n` +
+      `    margin: 0 !important;\n` +
+      `    padding: 0 !important;\n` +
+      `  }\n` +
+      `  #aioli-intro.aioli-hidden {\n` +
+      `    opacity: 0 !important;\n` +
+      `    visibility: hidden !important;\n` +
+      `    pointer-events: none !important;\n` +
+      `  }\n` +
+      `  #aioli-intro .aioli-mark {\n` +
+      `    font-weight: 300 !important;\n` +
+      `    font-size: clamp(2.2rem, 6vw, 4.2rem) !important;\n` +
+      `    letter-spacing: -0.02em !important;\n` +
+      `    line-height: 1 !important;\n` +
+      `    display: inline-flex !important;\n` +
+      `    align-items: baseline !important;\n` +
+      `    color: #ffffff !important;\n` +
+      `  }\n` +
+      `  #aioli-intro .aioli-mark .aioli-slash { font-weight: 400 !important; }\n` +
+      `  #aioli-intro .aioli-mark .aioli-cursor {\n` +
+      `    display: inline-block !important;\n` +
+      `    width: 0.55em !important;\n` +
+      `    height: 1em !important;\n` +
+      `    margin-left: 0.2em !important;\n` +
+      `    background: #ffffff !important;\n` +
+      `    transform: translateY(0.12em) !important;\n` +
+      `    animation: aioli-blink 1.05s steps(1, end) infinite !important;\n` +
+      `  }\n` +
+      `  @keyframes aioli-blink { 50% { opacity: 0; } }\n` +
+      `  #aioli-intro .aioli-sub {\n` +
+      `    margin-top: 1.5rem !important;\n` +
+      `    font-size: 0.7rem !important;\n` +
+      `    letter-spacing: 0.15em !important;\n` +
+      `    color: rgba(255,255,255,0.5) !important;\n` +
+      `    font-weight: 300 !important;\n` +
+      `  }\n` +
+      `  #aioli-intro .aioli-progress {\n` +
+      `    margin-top: 3rem !important;\n` +
+      `    width: 200px !important;\n` +
+      `    height: 1px !important;\n` +
+      `    background: rgba(255,255,255,0.14) !important;\n` +
+      `    overflow: hidden !important;\n` +
+      `    position: relative !important;\n` +
+      `  }\n` +
+      `  #aioli-intro .aioli-bar {\n` +
+      `    position: absolute !important;\n` +
+      `    inset: 0 !important;\n` +
+      `    background: #ffffff !important;\n` +
+      `    transform-origin: left !important;\n` +
+      `    transform: scaleX(0) !important;\n` +
+      `    transition: transform 0.4s ease !important;\n` +
+      `  }\n` +
+      `  #aioli-intro .aioli-ptext {\n` +
+      `    margin-top: 0.8rem !important;\n` +
+      `    font-size: 0.65rem !important;\n` +
+      `    letter-spacing: 0.25em !important;\n` +
+      `    color: rgba(255,255,255,0.5) !important;\n` +
+      `    height: 1em !important;\n` +
+      `    text-transform: uppercase !important;\n` +
+      `  }\n` +
+      `</style>\n`;
+ 
+    // Brand block: mirrors the panorama exported viewer almost line-for-line.
+    // Only "/ai.oli" is the anchor; the filename is a plain span.
+    const brandBlock =
+      `<!-- /ai.oli brand (injected at export) -->\n` +
+      `<div id="aioli-brand">` +
+      `<span class="aioli-filename">${escapeHtml(noExt)}</span>` +
+      `<a class="aioli-link" href="https://aiolicollective.com/" target="_blank" rel="noopener noreferrer">` +
+      `<span class="aioli-slash">/</span>ai.oli` +
+      `</a>` +
+      `</div>\n` +
+      `<!-- /ai.oli brand end -->\n`;
+ 
+    // Loading overlay block: shown immediately at body start, hides itself
+    // once the splat's <canvas> appears with non-zero size and has had
+    // ~600ms to paint a first frame. Hard timeout at 12s so the overlay
+    // never traps the user on a broken host.
+    // The script is wrapped in an IIFE and uses only ES5 syntax to stay
+    // compatible with whatever the host viewer expects.
+    const overlayBlock =
+      `<!-- /ai.oli loading overlay (injected at export) -->\n` +
+      `<div id="aioli-intro">\n` +
+      `  <div class="aioli-mark"><span class="aioli-slash">/</span>ai.oli<span class="aioli-cursor"></span></div>\n` +
+      `  <div class="aioli-sub">// Gaussian Splat Preview</div>\n` +
+      `  <div class="aioli-progress"><div class="aioli-bar"></div></div>\n` +
+      `  <div class="aioli-ptext">Initialisation</div>\n` +
+      `</div>\n` +
+      `<script>\n` +
+      `(function(){\n` +
+      `  var ov = document.getElementById('aioli-intro');\n` +
+      `  if (!ov) return;\n` +
+      `  var bar = ov.querySelector('.aioli-bar');\n` +
+      `  var txt = ov.querySelector('.aioli-ptext');\n` +
+      `  var p = 0.08;\n` +
+      `  function setP(v, label){ p = v; if (bar) bar.style.transform = 'scaleX(' + p + ')'; if (label && txt) txt.textContent = label; }\n` +
+      `  setP(0.08, 'Initialisation');\n` +
+      `  // Slowly creep up to 0.85 so the bar always feels alive\n` +
+      `  var steps = 0;\n` +
+      `  var creep = setInterval(function(){ if (p < 0.85) { setP(p + (0.85 - p) * 0.04); } if (++steps > 200) clearInterval(creep); }, 100);\n` +
+      `  var hidden = false;\n` +
+      `  function hide(){\n` +
+      `    if (hidden) return; hidden = true;\n` +
+      `    clearInterval(creep);\n` +
+      `    setP(1, 'Pret');\n` +
+      `    setTimeout(function(){\n` +
+      `      ov.classList.add('aioli-hidden');\n` +
+      `      setTimeout(function(){ if (ov.parentNode) ov.parentNode.removeChild(ov); }, 1400);\n` +
+      `    }, 350);\n` +
+      `  }\n` +
+      `  function hasCanvas(){\n` +
+      `    var c = document.querySelector('canvas');\n` +
+      `    return !!(c && c.width > 0 && c.height > 0);\n` +
+      `  }\n` +
+      `  function start(){\n` +
+      `    if (hasCanvas()) { setP(0.75, 'Rendu'); setTimeout(hide, 800); return; }\n` +
+      `    setP(0.4, 'Decodage');\n` +
+      `    var obs = new MutationObserver(function(){\n` +
+      `      if (hasCanvas()) {\n` +
+      `        obs.disconnect();\n` +
+      `        setP(0.75, 'Rendu');\n` +
+      `        // Give the renderer ~800ms to actually paint a first frame\n` +
+      `        setTimeout(hide, 800);\n` +
+      `      }\n` +
+      `    });\n` +
+      `    obs.observe(document.body, { childList: true, subtree: true, attributes: true });\n` +
+      `    setTimeout(function(){ try { obs.disconnect(); } catch(e){} hide(); }, 10000);\n` +
+      `  }\n` +
+      `  if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', start); } else { start(); }\n` +
+      `  // Absolute safety net\n` +
+      `  setTimeout(hide, 14000);\n` +
+      `})();\n` +
+      `</` + `script>\n` +
+      `<!-- /ai.oli loading overlay end -->\n`;
+ 
+    let out = html;
+ 
+    // 1) Header comment, just after <!DOCTYPE ...>
+    const doctypeMatch = out.match(/<!doctype[^>]*>/i);
+    if (doctypeMatch) {
+      const i = doctypeMatch.index + doctypeMatch[0].length;
+      out = out.slice(0, i) + '\n' + headerComment + out.slice(i);
+    } else {
+      out = headerComment + out;
+    }
+ 
+    // 2) <title> rewrite -> "<filename> /ai.oli"
+    const titleRe = /<title[^>]*>[\s\S]*?<\/title>/i;
+    const newTitle = `<title>${escapeHtml(noExt + ' /ai.oli')}</title>`;
+    if (titleRe.test(out)) {
+      out = out.replace(titleRe, newTitle);
+    } else {
+      // No <title> at all: stick one in <head> if possible, else skip
+      const headOpen = out.match(/<head[^>]*>/i);
+      if (headOpen) {
+        const i = headOpen.index + headOpen[0].length;
+        out = out.slice(0, i) + '\n' + newTitle + out.slice(i);
+      }
+    }
+ 
+    // 3) Font + brand styles into <head> (just before </head> for predictable cascade)
+    const headCloseRe = /<\/head\s*>/i;
+    if (headCloseRe.test(out)) {
+      out = out.replace(headCloseRe, fontLinks + '</head>');
+    } else {
+      // No </head>: prepend the styles
+      out = fontLinks + out;
+    }
+ 
+    // 4) Loading overlay block right AFTER <body ...> opens (so it's the
+    //    very first thing the browser paints)
+    const bodyOpenRe = /<body\b[^>]*>/i;
+    const bodyOpenMatch = out.match(bodyOpenRe);
+    if (bodyOpenMatch) {
+      const i = bodyOpenMatch.index + bodyOpenMatch[0].length;
+      out = out.slice(0, i) + '\n' + overlayBlock + out.slice(i);
+    } else {
+      // No <body>: just prepend the overlay (rare; some hosts use frameset)
+      out = overlayBlock + out;
+    }
+ 
+    // 5) Brand block right before </body>
+    const bodyCloseRe = /<\/body\s*>/i;
+    if (bodyCloseRe.test(out)) {
+      out = out.replace(bodyCloseRe, brandBlock + '</body>');
+    } else {
+      out = out + brandBlock;
+    }
+    return out;
   }
-
-  showToast('Generation...');
-
-  // Capture current view as the "starting view" for the client
-  captureCurrentCamera();
-
-  // Anti-script-break trick: the embedded template has <\/script> sequences
-  // that we need to convert back to </script> in the output
-  const CLOSE_SCRIPT   = '<' + '/script>';
-  const ESCAPED_CLOSE  = '<' + '\\/script>';
-  const tplEl = document.getElementById('viewer-template');
-  let tpl = tplEl.textContent.split(ESCAPED_CLOSE).join(CLOSE_SCRIPT);
-
-  const baseName = sanitize(currentName);
-  const noExt    = stripExt(currentName);
-
-  tpl = tpl
-    .replaceAll('__TITLE__', noExt + ' /ai.oli')
-    .replaceAll('__FILENAME_NOEXT__', noExt)
-    .replaceAll('__FORMAT__', String(currentFormat))
-    .replaceAll('__CAM_POS__',    JSON.stringify(initialCamPos))
-    .replaceAll('__CAM_TARGET__', JSON.stringify(initialCamTarget))
-    .replaceAll('__CAM_UP__',     JSON.stringify(initialCamUp))
-    .replace('__B64__', currentBase64);
-
-  const blob = new Blob([tpl], { type: 'text/html' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url;
-  a.download = baseName + '.html';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
-
-  const sizeNote = '~' + formatBytes(Math.round(currentBase64.length * 0.75));
-  setTimeout(() => showToast('Export OK ' + sizeNote), 80);
-}
-exportBtn.addEventListener('click', exportHtml);
+ 
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+ 
+  exportBtn.addEventListener('click', (e) => {
+    // Shift-click → export untouched (no watermark, no header comment)
+    exportCurrent({ brand: !e.shiftKey });
+  });
+ 
+  // ---- Keyboard ----------------------------------------------------
+  addEventListener('keydown', (e) => {
+    // Ignore keys when typing in an input (none here, but defensive)
+    if (e.target instanceof HTMLInputElement) return;
+    if (!intro.classList.contains('hidden')) return;
+ 
+    if (e.key === 'r' || e.key === 'R') refreshViewer();
+    if (e.key === 'f' || e.key === 'F') toggleFs();
+    if (e.key === 'e' || e.key === 'E') exportCurrent({ brand: !e.shiftKey });
+  });
 </script>
 </body>
 </html>
+ 
