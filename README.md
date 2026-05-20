@@ -11,7 +11,7 @@ L'idée directrice : capturer un splat depuis n'importe quel outil de production
 | Dossier | Description | Statut |
 |---|---|---|
 | [`max-vray/`](./max-vray) | Script MaxScript pour générer des datasets GS depuis 3ds Max + V-Ray. Volume placement, multi-Z layers, cubemap, smart cubemap, export COLMAP Y-down (LichtFeld-natif), points3D init, recentrage horizontal. | ✅ **v2.2 stable** |
-| [`unreal/`](./unreal) | Script Python pour Unreal Engine 5+. Mêmes conventions de sortie que `max-vray` (COLMAP Y-down). Volume + cubemap + smart cubemap + raycast wall avoidance + export COLMAP. Rendu via Movie Render Queue (Path Tracer) ou fallback HighResShot. | 🟢 **v0.1 alpha** |
+| [`unreal/`](./unreal) | Script Python pour Unreal Engine 5+. Mêmes conventions de sortie que `max-vray` (COLMAP Y-down). Volume + cubemap + smart cubemap + raycast wall avoidance + export COLMAP. Rendu Lumen-aware via HighResShot, Path Tracer en option, ou Movie Render Queue. | 🟢 **v0.1.1 alpha** |
 | `viewer/` | Viewer HTML standalone (mkkellogg gaussian-splats-3d) pour partager un `.ply` avec un client sans installer quoi que ce soit. | 🚧 À venir |
 | `blender/` | Add-on Blender pour Cycles. | 🟡 Planifié |
 
@@ -73,7 +73,7 @@ Voir [`unreal/README.md`](./unreal/README.md). TL;DR :
 3. Éditer `OUTPUT_FOLDER` dans `run_example.py`
 4. Output Log → Cmd Python → `py run_example.py`
 5. Les caméras apparaissent dans le dossier `GS_Capture_Cameras`, les fichiers COLMAP dans `<OUTPUT_FOLDER>/sparse/0/`
-6. Rendre via Movie Render Queue (Path Tracer) ou HighResShot, drop dans LichtFeld Studio
+6. Viewport en view mode Lit (Lumen GI) → `gs_capture.render_batch_screenshots(params)` dans le REPL → images dans `<OUTPUT_FOLDER>/images/`
 
 ## Trainers GS supportés
 
@@ -111,6 +111,7 @@ Le Gaussian Splatting partage les limites de la photogrammétrie classique :
 - [x] **Max v2.1** : Multi-Z layers, smart cubemap, export COLMAP, auto-recenter
 - [x] **Max v2.2** : Y-down natif (fix LichtFeld intégré), points3D auto-rempli, recentrage horizontal seul, suppression export JSON Nerfstudio
 - [x] **Unreal v0.1** : Port Python — volume + cubemap + smart cubemap + raycast + export COLMAP, fallback HighResShot
+- [x] **Unreal v0.1.1** : helper Lumen-aware (`setup_for_lumen_capture`), Lumen devient la voie principale
 - [ ] **Unreal v0.2** : UI Editor Utility Widget, mode spline + yaw/pitch custom, intégration Movie Render Queue automatique
 - [ ] Toggle UI Y-up / Y-down (si demande Brush forte)
 - [ ] Viewer HTML standalone avec SuperSplat preset
@@ -119,4 +120,4 @@ Le Gaussian Splatting partage les limites de la photogrammétrie classique :
 
 ## Credits
 
-Développé pour le pipeline interne **Aioli Collective**. Architecture spécifique aux scènes archviz intérieures (shops, galeries, showrooms).
+Développé pour le pipeline interne **Aioli Collective**, en vibecodant avec **ai.claude** (Claude Opus 4.7, Anthropic). Architecture spécifique aux scènes archviz intérieures (shops, galeries, showrooms).

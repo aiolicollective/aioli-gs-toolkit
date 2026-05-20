@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 ==============================================================================
-  gs_capture.py  --  v0.1
-  =======================
+  gs_capture.py  --  v0.1.1
+  =========================
   Synthetic dataset generator for Gaussian Splatting training,
   from Unreal Engine 5+ scenes.
 
@@ -20,7 +20,7 @@
     * COLMAP sparse/0/ export (Y-down world, OpenCV camera) ............. DONE
     * Auto-recenter on horizontal axes (vertical preserved) ............. DONE
     * 50 000 random init points in points3D.txt ......................... DONE
-    * High-res-screenshot batch render (basic fallback) ................. DONE
+    * High-res-screenshot batch render with Lumen-aware delays (v0.1.1) . DONE
 
   Out of scope for v0.1 (planned for v0.2):
     * Spline placement mode
@@ -275,6 +275,32 @@ def _get_actor_world_bbox(actor) -> Tuple[unreal.Vector, unreal.Vector]:
     bmin = unreal.Vector(origin.x - extent.x, origin.y - extent.y, origin.z - extent.z)
     bmax = unreal.Vector(origin.x + extent.x, origin.y + extent.y, origin.z + extent.z)
     return bmin, bmax
+
+
+def setup_for_lumen_capture(warmup_frames: int = 60) -> None:
+    """
+    Configure console variables for stable Lumen captures via HighResShot.
+
+    When the active camera moves to a new position, Lumen's GI cache needs a few
+    frames to converge before the captured image is clean. r.HighResScreenshotDelay
+    tells the engine to render N frames between the screenshot trigger and the
+    actual pixel capture -- so each shot effectively waits for Lumen to stabilize.
+
+    Call once before render_batch_screenshots(); the cvar persists for the rest
+    of the editor session.
+
+    Args:
+        warmup_frames: number of engine frames between trigger and capture.
+                       60 ~ 1 second at 60 fps, good for most archviz interiors.
+                       Bump to 120-180 if you see dim/noisy first frames after a
+                       camera switch (very large Lumen scenes, slow CPU/GPU).
+                       Set to 0 to restore engine default (4 frames).
+    """
+    world = _get_editor_world()
+    unreal.SystemLibrary.execute_console_command(
+        world, f"r.HighResScreenshotDelay {warmup_frames}"
+    )
+    _log(f"Lumen capture setup: r.HighResScreenshotDelay = {warmup_frames} frames")
 
 
 # ==============================================================================
@@ -777,31 +803,56 @@ def export_colmap_files(
 
 
 # ==============================================================================
-# 10. BATCH RENDER -- High-Res Screenshot (basic fallback)
+# 10. BATCH RENDER -- High-Res Screenshot (Lumen or Path Tracer)
 # ==============================================================================
 #
-# For best quality (path-traced rendering with proper anti-aliasing and
-# convergence), use Movie Render Queue with your own Path Tracer config.
-# This function is a simple drop-in for testing and Lumen-quality datasets.
+# HighResShot renders the scene at the current viewport view mode, at the
+# resolution you specify (independent of editor viewport size).
 #
-# Tip: before calling this, set the viewport view mode to Path Tracer
-#      (Viewport menu -> View Mode -> Path Tracing) so screenshots use it.
+# Recommended for the v0.1 series:
+#   * Lumen (real-time GI):
+#       - View mode: Lit (default)
+#       - Project Settings: Global Illumination + Reflections = Lumen
+#       - The setup_for_lumen_capture() helper (auto-called by this function)
+#         bumps r.HighResScreenshotDelay to 60 frames so Lumen converges between
+#         camera switches before each capture.
+#       - Best speed/quality compromise for v0.1 archviz testing.
 #
-# Limitations:
-#   * Path Tracer convergence sample count is whatever the editor uses for
-#     viewport view; that may be lower than what MRQ would give you.
-#   * No motion blur control, no console-variable overrides per shot.
-#   * Filenames are appended a number suffix by Unreal in some cases; if the
-#     filename collides with an existing file, behavior is engine-dependent.
+#   * Path Tracer (offline-quality):
+#       - View mode: switch viewport to "Path Tracing" before calling
+#       - Hardware Ray Tracing must be enabled in Project Settings
+#       - Slower (~10x) but reflections, caustics, GI all converge to ground truth
+#       - Pass lumen_warmup_frames=0 to skip the Lumen-specific setup
+#
+# For full MRQ control (per-shot cvar overrides, motion blur, AA quality presets),
+# build a Level Sequence with the GS_Capture_Cameras and run MRQ manually.
+# See unreal/README.md "Option A" for that workflow.
 
 def render_batch_screenshots(
     params: GSCaptureParams,
     cameras: Optional[List[Tuple[unreal.CineCameraActor, int, str]]] = None,
+    lumen_warmup_frames: int = 60,
 ) -> bool:
     """
     Iterate all cameras and take a HighResShot for each.
     Files are named <station4>_<face>.<ext> to match the COLMAP images.txt.
+
+    Tip: set the viewport view mode to Lit (Lumen GI) or Path Tracing before
+    calling. HighResShot uses whatever the current viewport view mode is.
+
+    Args:
+        params, cameras: see generate_cameras / export_colmap_files.
+        lumen_warmup_frames: bumps r.HighResScreenshotDelay so each shot waits
+                             N engine frames before capture, giving Lumen time
+                             to converge after each camera switch. 60 ~ 1 second
+                             at 60 fps (good default). Set to 0 to skip the
+                             setup (e.g. if you've already configured cvars
+                             manually or you're using Path Tracer where it's
+                             less critical).
     """
+    if lumen_warmup_frames > 0:
+        setup_for_lumen_capture(lumen_warmup_frames)
+
     if not cameras:
         cameras = scan_existing_cameras()
     if not cameras:
